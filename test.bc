@@ -1,0 +1,10 @@
+set 5 at x
+set "hello" at greeting
+set true at is_active
+
+print(greeting)
+
+function add(a, b) start
+    return (a + b)
+end
+print(add(add(1, 7), 3))
