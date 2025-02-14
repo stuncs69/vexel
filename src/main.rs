@@ -1,16 +1,29 @@
 mod parser;
 mod runtime;
-mod std;
+mod stdlib;
 use parser::parser::parse_program;
+use std::env;
+use std::fs;
 
 fn main() {
-    let code = r#"
-    set x math_sqrt(256)
+    let args: Vec<String> = env::args().collect();
 
-    print x
-    "#;
+    if args.len() < 2 {
+        eprintln!("Usage: {} <file_path>", args[0]);
+        std::process::exit(1);
+    }
 
-    let statements = parse_program(code);
+    // Read the file
+    let file_path = &args[1];
+    let code = match fs::read_to_string(file_path) {
+        Ok(content) => content,
+        Err(e) => {
+            eprintln!("Error reading file '{}': {}", file_path, e);
+            std::process::exit(1);
+        }
+    };
+
+    let statements = parse_program(&code);
     let mut runtime = runtime::Runtime::new();
     runtime.execute(statements);
 }

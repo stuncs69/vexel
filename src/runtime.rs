@@ -1,5 +1,5 @@
 use crate::parser::ast::{Expression, Statement};
-use crate::std::get_all_native_functions;
+use crate::stdlib::get_all_native_functions;
 use std::collections::HashMap;
 
 pub struct Runtime {
@@ -167,6 +167,13 @@ impl Runtime {
                             "<" => Some(Expression::Boolean(l < r)),
                             ">=" => Some(Expression::Boolean(l >= r)),
                             "<=" => Some(Expression::Boolean(l <= r)),
+                            _ => None,
+                        }
+                    }
+                    (Some(Expression::Boolean(l)), Some(Expression::Boolean(r))) => {
+                        match operator.as_str() {
+                            "==" => Some(Expression::Boolean(l == r)),
+                            "!=" => Some(Expression::Boolean(l != r)),
                             _ => None,
                         }
                     }
