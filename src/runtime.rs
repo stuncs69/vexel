@@ -1,6 +1,6 @@
-use std::collections::HashMap;
-use crate::parser::ast::{Statement, Expression};
+use crate::parser::ast::{Expression, Statement};
 use crate::std::get_all_native_functions;
+use std::collections::HashMap;
 
 pub struct Runtime {
     variables: HashMap<String, Expression>,
@@ -32,11 +32,18 @@ impl Runtime {
                 Statement::Set { var, value } => {
                     self.variables.insert(var, value);
                 }
-                Statement::Function { name, params, body, exported: _ } => {
+                Statement::Function {
+                    name,
+                    params,
+                    body,
+                    exported: _,
+                } => {
                     self.functions.insert(name, (params, body, false));
                 }
                 Statement::FunctionCall { name, args } => {
-                    if let Some(value) = self.evaluate_expression(Expression::FunctionCall { name, args }) {
+                    if let Some(value) =
+                        self.evaluate_expression(Expression::FunctionCall { name, args })
+                    {
                         match value {
                             Expression::Number(n) => println!("{}", n),
                             Expression::Boolean(b) => println!("{}", b),
@@ -46,10 +53,7 @@ impl Runtime {
                     }
                 }
                 Statement::Print { expr } => {
-                    println!("Print statement: {:?}", expr);
-                    println!("Variables: {:?}", self.variables);
                     if let Some(value) = self.evaluate_expression(expr) {
-                        // print the value of the expression
                         match value {
                             Expression::Number(n) => println!("{}", n),
                             Expression::Boolean(b) => println!("{}", b),
@@ -61,21 +65,33 @@ impl Runtime {
                                         Expression::Boolean(b) => println!("{}", b),
                                         Expression::StringLiteral(s) => println!("{}", s),
                                         Expression::FunctionCall { name, args } => {
-                                            if let Some(val) = self.evaluate_expression(Expression::FunctionCall { name, args }) {
+                                            if let Some(val) =
+                                                self.evaluate_expression(Expression::FunctionCall {
+                                                    name: name.clone(),
+                                                    args: args.clone(),
+                                                })
+                                            {
                                                 match val {
                                                     Expression::Number(n) => println!("{}", n),
                                                     Expression::Boolean(b) => println!("{}", b),
-                                                    Expression::StringLiteral(s) => println!("{}", s),
+                                                    Expression::StringLiteral(s) => {
+                                                        println!("{}", s)
+                                                    }
                                                     _ => (),
                                                 }
                                             }
-                                        },
+                                        }
                                         _ => (),
                                     }
                                 }
-                            },
+                            }
                             Expression::FunctionCall { name, args } => {
-                                if let Some(val) = self.evaluate_expression(Expression::FunctionCall { name, args }) {
+                                if let Some(val) =
+                                    self.evaluate_expression(Expression::FunctionCall {
+                                        name: name.clone(),
+                                        args: args.clone(),
+                                    })
+                                {
                                     match val {
                                         Expression::Number(n) => println!("{}", n),
                                         Expression::Boolean(b) => println!("{}", b),
@@ -83,14 +99,17 @@ impl Runtime {
                                         _ => (),
                                     }
                                 }
-                            },
+                            }
                             _ => (),
                         }
                     }
                 }
                 Statement::Return { expr } => {}
                 Statement::If { condition, body } => {
-                    if let Expression::Boolean(true) = self.evaluate_expression(condition).unwrap_or(Expression::Boolean(false)) {
+                    if let Expression::Boolean(true) = self
+                        .evaluate_expression(condition)
+                        .unwrap_or(Expression::Boolean(false))
+                    {
                         self.execute(body);
                     }
                 }
@@ -106,8 +125,6 @@ impl Runtime {
             Expression::Variable(name) => self.variables.get(&name).cloned(),
             Expression::FunctionCall { name, args } => {
                 if let Some(native_func) = self.native_functions.get(&name) {
-                    println!("Calling native function: {}", name);
-                    println!("Arguments: {:?}", args);
                     return native_func(args);
                 }
 
@@ -133,20 +150,26 @@ impl Runtime {
                     None
                 }
             }
-            Expression::Comparison { left, operator, right } => {
+            Expression::Comparison {
+                left,
+                operator,
+                right,
+            } => {
                 let left_val = self.evaluate_expression(*left);
                 let right_val = self.evaluate_expression(*right);
 
                 match (left_val, right_val) {
-                    (Some(Expression::Number(l)), Some(Expression::Number(r))) => match operator.as_str() {
-                        "==" => Some(Expression::Boolean(l == r)),
-                        "!=" => Some(Expression::Boolean(l != r)),
-                        ">" => Some(Expression::Boolean(l > r)),
-                        "<" => Some(Expression::Boolean(l < r)),
-                        ">=" => Some(Expression::Boolean(l >= r)),
-                        "<=" => Some(Expression::Boolean(l <= r)),
-                        _ => None,
-                    },
+                    (Some(Expression::Number(l)), Some(Expression::Number(r))) => {
+                        match operator.as_str() {
+                            "==" => Some(Expression::Boolean(l == r)),
+                            "!=" => Some(Expression::Boolean(l != r)),
+                            ">" => Some(Expression::Boolean(l > r)),
+                            "<" => Some(Expression::Boolean(l < r)),
+                            ">=" => Some(Expression::Boolean(l >= r)),
+                            "<=" => Some(Expression::Boolean(l <= r)),
+                            _ => None,
+                        }
+                    }
                     _ => None,
                 }
             }
