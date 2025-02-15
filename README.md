@@ -10,24 +10,25 @@ Vexel is a high-performance, JIT-compiled scripting language designed for effici
 
 ## Example Code
 
-```vexel
-function x(a) start
-    print a
+```bash
+set x 5
+set greeting "hello" 
+set is_active true
+
+print greeting
+
+function squirrelsay(message) start
+    print string_concat("🐿️ - ", message)
 end
 
-x("test")
+set array ["H", "i"]
+set array array_push(array, "!")
 
-if true == true start
-    x("true!!")
+if is_active != false start
+    set string_array array_to_string(array)
+    squirrelsay(string_array)
 end
 
-if false != true start
-    x("false!!")
-end
-
-set y string_concat("hello", "world")
-
-x(y)
 ```
 
 ## Installation
