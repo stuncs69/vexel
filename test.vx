@@ -2,10 +2,16 @@ set x 5
 set greeting "hello" 
 set is_active true
 
-print greeting 
+print greeting
 
-function add(a, b) start
-    set add_res math_add(a, b)
-    return add_res
+function squirrelsay(message) start
+    print string_concat("🐿️ - ", message)
 end
-print(add(add(1, 7), 3))
+
+set array ["H", "i"]
+set array array_push(array, "!")
+
+if is_active != false start
+    set string_array array_to_string(array)
+    squirrelsay(string_array)
+end

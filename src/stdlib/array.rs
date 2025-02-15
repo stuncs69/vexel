@@ -9,6 +9,7 @@ pub fn array_functions() -> Vec<(&'static str, fn(Vec<Expression>) -> Option<Exp
         ("array_set", array_set),
         ("array_slice", array_slice),
         ("array_join", array_join),
+        ("array_to_string", array_to_string),
     ]
 }
 
@@ -111,6 +112,39 @@ fn array_join(args: Vec<Expression>) -> Option<Expression> {
             .collect::<Vec<String>>()
             .join(separator);
         Some(Expression::StringLiteral(joined))
+    } else {
+        None
+    }
+}
+
+fn array_to_string(args: Vec<Expression>) -> Option<Expression> {
+    if args.len() != 1 {
+        return None;
+    }
+    if let Expression::Array(arr) = &args[0] {
+        let elements = arr
+            .iter()
+            .map(|e| match e {
+                Expression::Number(n) => n.to_string(),
+                Expression::Boolean(b) => b.to_string(),
+                Expression::StringLiteral(s) => format!("{}", s),
+                Expression::Null => "null".to_string(),
+                Expression::Array(_) => "[...]".to_string(),
+                Expression::FunctionCall { name, args } => {
+                    format!("{}({:?})", name, args)
+                }
+                Expression::Variable(name) => name.clone(),
+                Expression::Comparison {
+                    left,
+                    operator,
+                    right,
+                } => {
+                    format!("")
+                }
+            })
+            .collect::<Vec<String>>()
+            .join("");
+        Some(Expression::StringLiteral(format!("{}", elements)))
     } else {
         None
     }
