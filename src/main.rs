@@ -13,8 +13,13 @@ fn main() {
         std::process::exit(1);
     }
 
-    // Read the file
     let file_path = &args[1];
+
+    if !file_path.ends_with(".vx") {
+        eprintln!("File must have '.vx' extension");
+        std::process::exit(1);
+    }
+
     let code = match fs::read_to_string(file_path) {
         Ok(content) => content,
         Err(e) => {
