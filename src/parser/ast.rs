@@ -2,12 +2,30 @@
 
 #[derive(Debug, Clone)]
 pub(crate) enum Statement {
-    Set { var: String, value: Expression },
-    Function { name: String, params: Vec<String>, body: Vec<Statement>, exported: bool },
-    Print { expr: Expression },
-    Return { expr: Expression },
-    If { condition: Expression, body: Vec<Statement> },
-    FunctionCall { name: String, args: Vec<Expression> },
+    Set {
+        var: String,
+        value: Expression,
+    },
+    Function {
+        name: String,
+        params: Vec<String>,
+        body: Vec<Statement>,
+        exported: bool,
+    },
+    Print {
+        expr: Expression,
+    },
+    Return {
+        expr: Expression,
+    },
+    If {
+        condition: Expression,
+        body: Vec<Statement>,
+    },
+    FunctionCall {
+        name: String,
+        args: Vec<Expression>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -16,6 +34,15 @@ pub(crate) enum Expression {
     Boolean(bool),
     StringLiteral(String),
     Variable(String),
-    FunctionCall { name: String, args: Vec<Expression> },
-    Comparison { left: Box<Expression>, operator: String, right: Box<Expression> },
+    FunctionCall {
+        name: String,
+        args: Vec<Expression>,
+    },
+    Comparison {
+        left: Box<Expression>,
+        operator: String,
+        right: Box<Expression>,
+    },
+    Null,
+    Array(Vec<Expression>),
 }
