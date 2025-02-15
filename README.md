@@ -36,7 +36,7 @@ end
 Vexel is built using Rust. To install and build Vexel, ensure you have Rust installed and run:
 
 ```sh
-git clone https://github.com/yourusername/vexel.git
+git clone https://github.com/stuncs69/vexel.git
 cd vexel
 cargo build --release
 ```
