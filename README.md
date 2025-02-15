@@ -54,7 +54,7 @@ target/release/vexel script.vx
 - [ ] Implement loops (`for`, `while`)
 - [ ] Improve error handling
 - [ ] Add package management support
-- [ ] Array support
+- [x] Array support
 
 ## Contributing
 
