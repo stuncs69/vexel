@@ -1,0 +1,11 @@
+set x 5
+set greeting "hello" 
+set is_active true
+
+print greeting 
+
+function add(a, b) start
+    set add_res math_add(a, b)
+    return add_res
+end
+print(add(add(1, 7), 3))
