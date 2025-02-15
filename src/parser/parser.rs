@@ -1,7 +1,7 @@
 // src/parser/old
 
+use crate::parser::ast::{Expression, Statement};
 use std::collections::VecDeque;
-use crate::parser::ast::{Statement, Expression};
 
 pub(crate) fn parse_program(code: &str) -> Vec<Statement> {
     let mut lines: VecDeque<&str> = code.lines().map(str::trim).collect();
@@ -65,7 +65,12 @@ fn parse_function(lines: &mut VecDeque<&str>, header: &str) -> Statement {
 
     let body = parse_block(lines);
 
-    Statement::Function { name, params, body, exported }
+    Statement::Function {
+        name,
+        params,
+        body,
+        exported,
+    }
 }
 
 fn parse_if_statement(lines: &mut VecDeque<&str>, header: &str) -> Statement {
@@ -100,6 +105,10 @@ fn parse_expression(expr: &str) -> Expression {
         return Expression::StringLiteral(expr[1..expr.len() - 1].to_string());
     }
 
+    if expr.starts_with('[') && expr.ends_with(']') {
+        return parse_array(expr);
+    }
+
     if let Some(operator) = ["==", "!=", "<", ">"].iter().find(|&&op| expr.contains(op)) {
         let parts: Vec<&str> = expr.split(operator).map(str::trim).collect();
         if parts.len() == 2 {
@@ -120,6 +129,18 @@ fn parse_expression(expr: &str) -> Expression {
     Expression::Variable(expr.to_string())
 }
 
+fn parse_array(expr: &str) -> Expression {
+    let content = extract_between(expr, "[", "]");
+    let elements: Vec<Expression> = content
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(parse_expression)
+        .collect();
+
+    Expression::Array(elements)
+}
+
 fn parse_function_call(expr: &str) -> Expression {
     let name = extract_before(expr, "(").trim().to_string();
     let args = extract_between(expr, "(", ")")
@@ -131,7 +152,12 @@ fn parse_function_call(expr: &str) -> Expression {
 }
 
 fn extract_between<'a>(s: &'a str, start: &str, end: &str) -> &'a str {
-    s.split(start).nth(1).unwrap_or("").split(end).next().unwrap_or("")
+    s.split(start)
+        .nth(1)
+        .unwrap_or("")
+        .split(end)
+        .next()
+        .unwrap_or("")
 }
 
 fn extract_before<'a>(s: &'a str, delimiter: &str) -> &'a str {

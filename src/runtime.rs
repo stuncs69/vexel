@@ -30,7 +30,9 @@ impl Runtime {
         for statement in statements {
             match statement {
                 Statement::Set { var, value } => {
-                    self.variables.insert(var, value);
+                    let evaluated_value =
+                        self.evaluate_expression(value).unwrap_or(Expression::Null);
+                    self.variables.insert(var, evaluated_value);
                 }
                 Statement::Function {
                     name,
@@ -44,64 +46,12 @@ impl Runtime {
                     if let Some(value) =
                         self.evaluate_expression(Expression::FunctionCall { name, args })
                     {
-                        match value {
-                            Expression::Number(n) => println!("{}", n),
-                            Expression::Boolean(b) => println!("{}", b),
-                            Expression::StringLiteral(s) => println!("{}", s),
-                            _ => (),
-                        }
+                        self.print_expression(&value);
                     }
                 }
                 Statement::Print { expr } => {
                     if let Some(value) = self.evaluate_expression(expr) {
-                        match value {
-                            Expression::Number(n) => println!("{}", n),
-                            Expression::Boolean(b) => println!("{}", b),
-                            Expression::StringLiteral(s) => println!("{}", s),
-                            Expression::Variable(name) => {
-                                if let Some(val) = self.variables.get(&name) {
-                                    match val {
-                                        Expression::Number(n) => println!("{}", n),
-                                        Expression::Boolean(b) => println!("{}", b),
-                                        Expression::StringLiteral(s) => println!("{}", s),
-                                        Expression::FunctionCall { name, args } => {
-                                            if let Some(val) =
-                                                self.evaluate_expression(Expression::FunctionCall {
-                                                    name: name.clone(),
-                                                    args: args.clone(),
-                                                })
-                                            {
-                                                match val {
-                                                    Expression::Number(n) => println!("{}", n),
-                                                    Expression::Boolean(b) => println!("{}", b),
-                                                    Expression::StringLiteral(s) => {
-                                                        println!("{}", s)
-                                                    }
-                                                    _ => (),
-                                                }
-                                            }
-                                        }
-                                        _ => (),
-                                    }
-                                }
-                            }
-                            Expression::FunctionCall { name, args } => {
-                                if let Some(val) =
-                                    self.evaluate_expression(Expression::FunctionCall {
-                                        name: name.clone(),
-                                        args: args.clone(),
-                                    })
-                                {
-                                    match val {
-                                        Expression::Number(n) => println!("{}", n),
-                                        Expression::Boolean(b) => println!("{}", b),
-                                        Expression::StringLiteral(s) => println!("{}", s),
-                                        _ => (),
-                                    }
-                                }
-                            }
-                            _ => (),
-                        }
+                        self.print_expression(&value);
                     }
                 }
                 Statement::Return { expr } => {}
@@ -117,24 +67,95 @@ impl Runtime {
         }
     }
 
+    fn print_expression(&self, expr: &Expression) {
+        match expr {
+            Expression::Number(n) => println!("{}", n),
+            Expression::Boolean(b) => println!("{}", b),
+            Expression::StringLiteral(s) => println!("{}", s),
+            Expression::Null => println!("null"),
+            Expression::Array(arr) => {
+                let elements: Vec<String> =
+                    arr.iter().map(|e| self.expression_to_string(e)).collect();
+                println!("[{}]", elements.join(", "));
+            }
+            Expression::Variable(name) => {
+                if let Some(val) = self.variables.get(name) {
+                    self.print_expression(val);
+                } else {
+                    println!("undefined");
+                }
+            }
+            Expression::FunctionCall { name, args } => {
+                if let Some(val) = self.evaluate_expression(Expression::FunctionCall {
+                    name: name.clone(),
+                    args: args.clone(),
+                }) {
+                    self.print_expression(&val);
+                }
+            }
+            _ => println!(""),
+        }
+    }
+
+    fn expression_to_string(&self, expr: &Expression) -> String {
+        match expr {
+            Expression::Number(n) => n.to_string(),
+            Expression::Boolean(b) => b.to_string(),
+            Expression::StringLiteral(s) => format!("\"{}\"", s),
+            Expression::Null => "null".to_string(),
+            Expression::Array(arr) => {
+                let elements: Vec<String> =
+                    arr.iter().map(|e| self.expression_to_string(e)).collect();
+                format!("[{}]", elements.join(", "))
+            }
+            Expression::Variable(name) => {
+                if let Some(val) = self.variables.get(name) {
+                    self.expression_to_string(val)
+                } else {
+                    "undefined".to_string()
+                }
+            }
+            Expression::FunctionCall { name, args } => {
+                if let Some(val) = self.evaluate_expression(Expression::FunctionCall {
+                    name: name.clone(),
+                    args: args.clone(),
+                }) {
+                    self.expression_to_string(&val)
+                } else {
+                    "undefined".to_string()
+                }
+            }
+            _ => "".to_string(),
+        }
+    }
+
     fn evaluate_expression(&self, expr: Expression) -> Option<Expression> {
         match expr {
+            Expression::Array(elements) => {
+                let evaluated_elements: Vec<Expression> = elements
+                    .into_iter()
+                    .filter_map(|e| self.evaluate_expression(e))
+                    .collect();
+                Some(Expression::Array(evaluated_elements))
+            }
             Expression::Number(n) => Some(Expression::Number(n)),
+            Expression::Null => Some(Expression::Null),
             Expression::Boolean(b) => Some(Expression::Boolean(b)),
             Expression::StringLiteral(s) => Some(Expression::StringLiteral(s)),
             Expression::Variable(name) => self.variables.get(&name).cloned(),
             Expression::FunctionCall { name, args } => {
-                if let Some(native_func) = self.native_functions.get(&name) {
-                    return native_func(args);
-                }
+                let evaluated_args: Vec<Expression> = args
+                    .into_iter()
+                    .map(|arg| self.evaluate_expression(arg).unwrap_or(Expression::Null))
+                    .collect();
 
-                if let Some((params, body, _)) = self.functions.get(&name) {
-                    if params.len() == args.len() {
+                if let Some(native_func) = self.native_functions.get(&name) {
+                    native_func(evaluated_args)
+                } else if let Some((params, body, _)) = self.functions.get(&name) {
+                    if params.len() == evaluated_args.len() {
                         let mut local_vars = HashMap::new();
-                        for (param, arg) in params.iter().zip(args.into_iter()) {
-                            if let Some(value) = self.evaluate_expression(arg) {
-                                local_vars.insert(param.clone(), value);
-                            }
+                        for (param, arg) in params.iter().zip(evaluated_args.into_iter()) {
+                            local_vars.insert(param.clone(), arg);
                         }
                         let mut nested_runtime = Runtime {
                             variables: local_vars,

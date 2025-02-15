@@ -11,5 +11,9 @@ pub fn debug_functions() -> Vec<(&'static str, fn(Vec<Expression>) -> Option<Exp
                 None
             }
         }),
+        ("dump", |args: Vec<Expression>| {
+            println!("{:?}", args[0]);
+            None
+        }),
     ]
 }
