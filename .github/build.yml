@@ -1,0 +1,35 @@
+name: Build and Release Vexel Project
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        rust_version: [stable, nightly]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+
+      - name: Set up Rust
+        uses: actions/setup-rust@v1
+        with:
+          rust-version: ${{ matrix.rust_version }}
+
+      - name: Install dependencies
+        run: |
+          cargo build --release
+
+      - name: Upload raw binaries as release assets
+        uses: ncipollo/release-action@v1
+        with:
+          artifacts: |
+            target/release/vexel-linux
+            target/release/vexel-macos
+            target/release/vexel.exe
