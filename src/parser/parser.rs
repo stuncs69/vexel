@@ -18,6 +18,8 @@ fn parse_block(lines: &mut VecDeque<&str>) -> Vec<Statement> {
             Some("if") => statements.push(parse_if_statement(lines, line)),
             Some("print") => statements.push(parse_print_statement(line)),
             Some("return") => statements.push(parse_return_statement(line)),
+            Some("for") => statements.push(parse_for_loop(lines, line)),
+            Some("while") => statements.push(parse_while_loop(lines, line)),
             Some("end") => break,
             _ => {
                 if line.contains('(') && line.contains(')') {
@@ -127,6 +129,31 @@ fn parse_expression(expr: &str) -> Expression {
     }
 
     Expression::Variable(expr.to_string())
+}
+
+fn parse_for_loop(lines: &mut VecDeque<&str>, header: &str) -> Statement {
+    let parts: Vec<&str> = header.split_whitespace().collect();
+    println!("{:?}", parts);
+    if parts.len() != 4 || parts[2] != "in" {
+        panic!("Invalid for loop syntax: {}", header);
+    }
+
+    let variable = parts[1].to_string();
+    let iterable = parse_expression(parts[3]);
+    let body = parse_block(lines);
+
+    Statement::ForLoop {
+        variable,
+        iterable,
+        body,
+    }
+}
+
+fn parse_while_loop(lines: &mut VecDeque<&str>, header: &str) -> Statement {
+    let condition = parse_expression(&header[6..].trim());
+    let body = parse_block(lines);
+
+    Statement::WhileLoop { condition, body }
 }
 
 fn parse_array(expr: &str) -> Expression {

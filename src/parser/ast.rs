@@ -26,6 +26,15 @@ pub(crate) enum Statement {
         name: String,
         args: Vec<Expression>,
     },
+    ForLoop {
+        variable: String,
+        iterable: Expression,
+        body: Vec<Statement>,
+    },
+    WhileLoop {
+        condition: Expression,
+        body: Vec<Statement>,
+    },
 }
 
 #[derive(Debug, Clone)]

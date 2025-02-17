@@ -29,6 +29,12 @@ impl Runtime {
     pub(crate) fn execute(&mut self, statements: Vec<Statement>) {
         for statement in statements {
             match statement {
+                Statement::ForLoop {
+                    variable,
+                    iterable,
+                    body,
+                } => {}
+                Statement::WhileLoop { condition, body } => {}
                 Statement::Set { var, value } => {
                     let evaluated_value =
                         self.evaluate_expression(value).unwrap_or(Expression::Null);
