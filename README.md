@@ -52,7 +52,7 @@ target/release/vexel script.vx
 ## Roadmap
 
 - [ ] Add more built-in functions
-- [ ] Implement loops (`for`, `while`)
+- [x] Implement loops (`for`, `while`)
 - [ ] Improve error handling
 - [ ] Add package management support
 - [x] Array support
