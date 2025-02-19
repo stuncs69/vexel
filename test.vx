@@ -15,3 +15,8 @@ if is_active != false start
     set string_array array_to_string(array)
     squirrelsay(string_array)
 end
+
+for x in array_range(40) start
+    print "WHAAT..."
+    print x
+end
