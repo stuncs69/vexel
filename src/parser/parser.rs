@@ -133,13 +133,14 @@ fn parse_expression(expr: &str) -> Expression {
 
 fn parse_for_loop(lines: &mut VecDeque<&str>, header: &str) -> Statement {
     let parts: Vec<&str> = header.split_whitespace().collect();
-    println!("{:?}", parts);
-    if parts.len() != 4 || parts[2] != "in" {
+    if parts[2] != "in" {
         panic!("Invalid for loop syntax: {}", header);
     }
 
     let variable = parts[1].to_string();
-    let iterable = parse_expression(parts[3]);
+    let mut bind = parts[3..].join(" ");
+    bind = bind.strip_suffix(" start").unwrap_or(&bind).to_string();
+    let iterable = parse_expression(&bind);
     let body = parse_block(lines);
 
     Statement::ForLoop {
@@ -150,7 +151,7 @@ fn parse_for_loop(lines: &mut VecDeque<&str>, header: &str) -> Statement {
 }
 
 fn parse_while_loop(lines: &mut VecDeque<&str>, header: &str) -> Statement {
-    let condition = parse_expression(&header[6..].trim());
+    let condition = parse_expression(&header[6..].strip_suffix(" start").unwrap().trim());
     let body = parse_block(lines);
 
     Statement::WhileLoop { condition, body }

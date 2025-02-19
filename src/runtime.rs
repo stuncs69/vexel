@@ -33,8 +33,23 @@ impl Runtime {
                     variable,
                     iterable,
                     body,
-                } => {}
-                Statement::WhileLoop { condition, body } => {}
+                } => {
+                    if let Some(Expression::Array(elements)) = self.evaluate_expression(iterable) {
+                        for element in elements {
+                            self.variables.insert(variable.clone(), element);
+                            self.execute(body.clone());
+                        }
+                    }
+                }
+                Statement::WhileLoop { condition, body } => {
+                    while let Some(Expression::Boolean(true))
+                    | Some(Expression::Variable(_))
+                    | Some(Expression::Comparison { .. }) =
+                        self.evaluate_expression(condition.clone())
+                    {
+                        self.execute(body.clone());
+                    }
+                }
                 Statement::Set { var, value } => {
                     let evaluated_value =
                         self.evaluate_expression(value).unwrap_or(Expression::Null);
