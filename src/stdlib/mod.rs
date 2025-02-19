@@ -4,6 +4,7 @@ pub mod array;
 pub mod core;
 pub mod debug;
 pub mod math;
+pub mod net;
 pub mod string;
 
 pub fn get_all_native_functions() -> Vec<(
@@ -15,6 +16,7 @@ pub fn get_all_native_functions() -> Vec<(
     functions.extend(array::array_functions());
     functions.extend(debug::debug_functions());
     functions.extend(string::string_functions());
+    functions.extend(net::http_functions());
     functions.extend(core::core_functions());
     functions
 }

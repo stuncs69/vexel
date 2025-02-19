@@ -12,7 +12,7 @@ Vexel is a high-performance, JIT-compiled scripting language designed for effici
 
 ```bash
 set x 5
-set greeting "hello" 
+set greeting "hello"
 set is_active true
 
 print greeting
@@ -51,7 +51,7 @@ target/release/vexel script.vx
 
 ## Roadmap
 
-- [ ] Add more built-in functions
+- [x] Add more built-in functions
 - [x] Implement loops (`for`, `while`)
 - [ ] Improve error handling
 - [ ] Add package management support
