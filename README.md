@@ -56,7 +56,7 @@ target/release/vexel script.vx
 - [ ] Improve error handling
 - [ ] Add package management support
 - [x] Array support
-- [ ] Add map support
+- [ ] Add object support
 
 ## Contributing
 
