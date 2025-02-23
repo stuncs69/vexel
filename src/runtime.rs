@@ -29,6 +29,64 @@ impl Runtime {
     pub(crate) fn execute(&mut self, statements: Vec<Statement>) {
         for statement in statements {
             match statement {
+                Statement::PropertySet {
+                    object,
+                    property,
+                    value,
+                } => {
+                    let evaluated_value =
+                        self.evaluate_expression(value).unwrap_or(Expression::Null);
+
+                    match &object {
+                        Expression::Variable(var_name) => {
+                            if let Some(Expression::Object(mut properties)) =
+                                self.variables.remove(var_name)
+                            {
+                                let mut property_found = false;
+                                for (key, val) in properties.iter_mut() {
+                                    if key == &property {
+                                        *val = evaluated_value.clone();
+                                        property_found = true;
+                                        break;
+                                    }
+                                }
+                                if !property_found {
+                                    properties.push((property.clone(), evaluated_value));
+                                }
+
+                                self.variables
+                                    .insert(var_name.clone(), Expression::Object(properties));
+                            }
+                        }
+                        Expression::PropertyAccess {
+                            object: inner_object,
+                            property: inner_property,
+                        } => {
+                            if let Expression::Variable(parent_var) = &**inner_object {
+                                if let Some(Expression::Object(mut properties)) =
+                                    self.variables.remove(parent_var)
+                                {
+                                    let mut property_found = false;
+                                    for (key, val) in properties.iter_mut() {
+                                        if key == inner_property {
+                                            *val = evaluated_value.clone();
+                                            property_found = true;
+                                            break;
+                                        }
+                                    }
+                                    if !property_found {
+                                        properties.push((inner_property.clone(), evaluated_value));
+                                    }
+
+                                    self.variables
+                                        .insert(parent_var.clone(), Expression::Object(properties));
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+
                 Statement::ForLoop {
                     variable,
                     iterable,
@@ -99,6 +157,13 @@ impl Runtime {
                     arr.iter().map(|e| self.expression_to_string(e)).collect();
                 println!("[{}]", elements.join(", "));
             }
+            Expression::Object(properties) => {
+                let elements: Vec<String> = properties
+                    .iter()
+                    .map(|(key, value)| format!("{}: {}", key, self.expression_to_string(value)))
+                    .collect();
+                println!("{{{}}}", elements.join(", "));
+            }
             Expression::Variable(name) => {
                 if let Some(val) = self.variables.get(name) {
                     self.print_expression(val);
@@ -159,11 +224,33 @@ impl Runtime {
                     .collect();
                 Some(Expression::Array(evaluated_elements))
             }
+            Expression::Object(properties) => {
+                let evaluated_properties: Vec<(String, Expression)> = properties
+                    .into_iter()
+                    .filter_map(|(key, value)| {
+                        if let Some(evaluated_value) = self.evaluate_expression(value) {
+                            Some((key, evaluated_value))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                Some(Expression::Object(evaluated_properties))
+            }
             Expression::Number(n) => Some(Expression::Number(n)),
             Expression::Null => Some(Expression::Null),
             Expression::Boolean(b) => Some(Expression::Boolean(b)),
             Expression::StringLiteral(s) => Some(Expression::StringLiteral(s)),
-            Expression::Variable(name) => self.variables.get(&name).cloned(),
+            Expression::Variable(name) => {
+                if let Some(Expression::Object(properties)) = self.variables.get(&name) {
+                    let mut new_properties = Vec::new();
+                    for (key, value) in properties {
+                        new_properties.push((key.clone(), value.clone()));
+                    }
+                    return Some(Expression::Object(new_properties));
+                }
+                self.variables.get(&name).cloned()
+            }
             Expression::FunctionCall { name, args } => {
                 let evaluated_args: Vec<Expression> = args
                     .into_iter()
@@ -220,6 +307,23 @@ impl Runtime {
                         }
                     }
                     _ => None,
+                }
+            }
+            Expression::PropertyAccess { object, property } => {
+                if let Some(evaluated_object) = self.evaluate_expression(*object) {
+                    match evaluated_object {
+                        Expression::Object(properties) => {
+                            for (key, value) in properties {
+                                if key == property {
+                                    return Some(value);
+                                }
+                            }
+                            None
+                        }
+                        _ => None,
+                    }
+                } else {
+                    None
                 }
             }
         }

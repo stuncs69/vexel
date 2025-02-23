@@ -35,6 +35,11 @@ pub(crate) enum Statement {
         condition: Expression,
         body: Vec<Statement>,
     },
+    PropertySet {
+        object: Expression,
+        property: String,
+        value: Expression,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -54,4 +59,9 @@ pub(crate) enum Expression {
     },
     Null,
     Array(Vec<Expression>),
+    Object(Vec<(String, Expression)>),
+    PropertyAccess {
+        object: Box<Expression>,
+        property: String,
+    },
 }

@@ -4,7 +4,11 @@ use crate::parser::ast::{Expression, Statement};
 use std::collections::VecDeque;
 
 pub(crate) fn parse_program(code: &str) -> Vec<Statement> {
-    let mut lines: VecDeque<&str> = code.lines().map(str::trim).collect();
+    let mut lines: VecDeque<&str> = code
+        .lines()
+        .map(|line| line.split('#').next().unwrap_or("").trim())
+        .filter(|line| !line.is_empty())
+        .collect();
     parse_block(&mut lines)
 }
 
@@ -13,7 +17,7 @@ fn parse_block(lines: &mut VecDeque<&str>) -> Vec<Statement> {
 
     while let Some(line) = lines.pop_front() {
         match line.split_whitespace().next() {
-            Some("set") => statements.push(parse_set_statement(line)),
+            Some("set") => statements.push(parse_set_statement(line, lines)),
             Some("function") | Some("export") => statements.push(parse_function(lines, line)),
             Some("if") => statements.push(parse_if_statement(lines, line)),
             Some("print") => statements.push(parse_print_statement(line)),
@@ -43,16 +47,41 @@ fn parse_function_call_statement(expr: &str) -> Statement {
     Statement::FunctionCall { name, args }
 }
 
-fn parse_set_statement(line: &str) -> Statement {
-    let parts: Vec<&str> = line.splitn(3, ' ').collect();
-    if parts.len() != 3 {
-        panic!("Invalid set statement: {}", line);
+fn parse_set_statement(first_line: &str, lines: &mut VecDeque<&str>) -> Statement {
+    let parts: Vec<&str> = first_line.splitn(3, ' ').collect();
+    if parts.len() < 3 {
+        panic!("Invalid set statement: {}", first_line);
     }
 
-    let var = parts[1].to_string();
-    let value = parse_expression(parts[2]);
+    let target = parts[1].to_string();
+    let mut value_str = parts[2].to_string();
 
-    Statement::Set { var, value }
+    // If the value is an object, collect multiple lines
+    if value_str == "{" {
+        let mut object_lines = Vec::new();
+        while let Some(line) = lines.pop_front() {
+            if line == "}" {
+                break;
+            }
+            object_lines.push(line);
+        }
+        value_str = format!("{{ {} }}", object_lines.join(" "));
+    }
+
+    let value = parse_expression(&value_str);
+
+    if target.contains('.') {
+        let mut parts = target.split('.').collect::<Vec<&str>>();
+        let property = parts.pop().unwrap().to_string();
+        let object_expr = parse_property_access(&target);
+        return Statement::PropertySet {
+            object: object_expr,
+            property,
+            value,
+        };
+    }
+
+    Statement::Set { var: target, value }
 }
 
 fn parse_function(lines: &mut VecDeque<&str>, header: &str) -> Statement {
@@ -95,6 +124,8 @@ fn parse_return_statement(line: &str) -> Statement {
 }
 
 fn parse_expression(expr: &str) -> Expression {
+    let expr = expr.trim();
+
     if let Ok(num) = expr.parse::<i32>() {
         return Expression::Number(num);
     }
@@ -111,11 +142,15 @@ fn parse_expression(expr: &str) -> Expression {
         return parse_array(expr);
     }
 
+    if expr.starts_with('{') && expr.ends_with('}') {
+        return parse_object(expr);
+    }
+
     if let Some(operator) = ["==", "!=", "<", ">"].iter().find(|&&op| expr.contains(op)) {
         let parts: Vec<&str> = expr.split(operator).map(str::trim).collect();
         if parts.len() == 2 {
             let left = parse_expression(parts[0]);
-            let right = parse_expression(extract_before(parts[1], " start"));
+            let right = parse_expression(parts[1]);
             return Expression::Comparison {
                 left: Box::new(left),
                 operator: operator.to_string(),
@@ -128,7 +163,48 @@ fn parse_expression(expr: &str) -> Expression {
         return parse_function_call(expr);
     }
 
+    if expr.contains('.') {
+        return parse_property_access(expr);
+    }
+
     Expression::Variable(expr.to_string())
+}
+
+fn parse_object(expr: &str) -> Expression {
+    let content = extract_between(expr, "{", "}");
+    let mut properties = Vec::new();
+
+    for part in content.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+        let key_value: Vec<&str> = part.split(':').map(str::trim).collect();
+        if key_value.len() != 2 {
+            panic!("Invalid object syntax: {}", expr);
+        }
+
+        let key = key_value[0].to_string();
+        let value = parse_expression(key_value[1]);
+
+        properties.push((key, value));
+    }
+
+    Expression::Object(properties)
+}
+
+fn parse_property_access(expr: &str) -> Expression {
+    let parts: Vec<&str> = expr.split('.').collect();
+    if parts.len() < 2 {
+        panic!("Invalid property access: {}", expr);
+    }
+
+    let mut object_expr = Expression::Variable(parts[0].to_string());
+
+    for property in &parts[1..] {
+        object_expr = Expression::PropertyAccess {
+            object: Box::new(object_expr),
+            property: property.to_string(),
+        };
+    }
+
+    object_expr
 }
 
 fn parse_for_loop(lines: &mut VecDeque<&str>, header: &str) -> Statement {

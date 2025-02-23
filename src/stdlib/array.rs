@@ -1,3 +1,5 @@
+use std::fmt::format;
+
 use crate::parser::ast::Expression;
 
 pub fn array_functions() -> Vec<(&'static str, fn(Vec<Expression>) -> Option<Expression>)> {
@@ -129,6 +131,8 @@ fn array_to_string(args: Vec<Expression>) -> Option<Expression> {
                 Expression::Number(n) => n.to_string(),
                 Expression::Boolean(b) => b.to_string(),
                 Expression::StringLiteral(s) => format!("{}", s),
+                Expression::PropertyAccess { object, property } => format!(""),
+                Expression::Object(properties) => format!(""),
                 Expression::Null => "null".to_string(),
                 Expression::Array(_) => "[...]".to_string(),
                 Expression::FunctionCall { name, args } => {
