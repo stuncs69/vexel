@@ -57,6 +57,7 @@ target/release/vexel script.vx
 - [ ] Add package management support
 - [x] Array support
 - [ ] Add object support
+- [x] Add REPL
 
 ## Contributing
 
