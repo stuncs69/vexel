@@ -2,6 +2,8 @@ mod parser;
 mod runtime;
 mod stdlib;
 use parser::parser::parse_program;
+use runtime::repl::repl;
+use runtime::runtime::Runtime;
 use std::env;
 use std::fs;
 
@@ -9,8 +11,8 @@ fn main() {
     let args: Vec<String> = env::args().collect();
 
     if args.len() < 2 {
-        eprintln!("Usage: {} <file_path>", args[0]);
-        std::process::exit(1);
+        println!("Vexel REPL c:");
+        repl();
     }
 
     let file_path = &args[1];
@@ -29,6 +31,6 @@ fn main() {
     };
 
     let statements = parse_program(&code);
-    let mut runtime = runtime::Runtime::new();
+    let mut runtime = Runtime::new();
     runtime.execute(statements);
 }
