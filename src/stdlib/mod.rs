@@ -5,6 +5,7 @@ pub mod core;
 pub mod debug;
 pub mod math;
 pub mod net;
+mod object;
 pub mod string;
 
 pub fn get_all_native_functions() -> Vec<(
@@ -18,5 +19,6 @@ pub fn get_all_native_functions() -> Vec<(
     functions.extend(string::string_functions());
     functions.extend(net::http_functions());
     functions.extend(core::core_functions());
+    functions.extend(object::object_functions());
     functions
 }
