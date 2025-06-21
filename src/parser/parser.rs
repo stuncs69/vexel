@@ -24,6 +24,7 @@ fn parse_block(lines: &mut VecDeque<&str>) -> Vec<Statement> {
             Some("return") => statements.push(parse_return_statement(line)),
             Some("for") => statements.push(parse_for_loop(lines, line)),
             Some("while") => statements.push(parse_while_loop(lines, line)),
+            Some("import") => statements.push(parse_import_statement(line)),
             Some("end") => break,
             _ => {
                 if line.contains('(') && line.contains(')') {
@@ -168,8 +169,39 @@ fn parse_print_statement(line: &str) -> Statement {
 }
 
 fn parse_return_statement(line: &str) -> Statement {
-    Statement::Return {
-        expr: parse_expression(&line[7..].trim()),
+    let expr_str = line.trim();
+    if expr_str.len() > 6 {
+        Statement::Return {
+            expr: parse_expression(expr_str[6..].trim()),
+        }
+    } else {
+        Statement::Return {
+            expr: Expression::Null,
+        }
+    }
+}
+
+fn parse_import_statement(line: &str) -> Statement {
+    let parts: Vec<&str> = line.split_whitespace().collect();
+    if parts.len() < 4 || parts[2] != "from" {
+        panic!("Invalid import syntax. Expected: import module_name from 'file_path'");
+    }
+
+    let module_name = parts[1].to_string();
+    let file_path_with_quotes = parts[3..].join(" ");
+
+    let file_path = if (file_path_with_quotes.starts_with('\'')
+        && file_path_with_quotes.ends_with('\''))
+        || (file_path_with_quotes.starts_with('"') && file_path_with_quotes.ends_with('"'))
+    {
+        file_path_with_quotes[1..file_path_with_quotes.len() - 1].to_string()
+    } else {
+        panic!("File path must be quoted in import statement");
+    };
+
+    Statement::Import {
+        module_name,
+        file_path,
     }
 }
 
@@ -196,7 +228,10 @@ fn parse_expression(expr: &str) -> Expression {
         return parse_object(expr);
     }
 
-    if let Some(operator) = ["==", "!=", "<", ">"].iter().find(|&&op| expr.contains(op)) {
+    if let Some(operator) = ["==", "!=", "<=", ">=", "<", ">"]
+        .iter()
+        .find(|&&op| expr.contains(op))
+    {
         let parts: Vec<&str> = expr.split(operator).map(str::trim).collect();
         if parts.len() == 2 {
             let left = parse_expression(parts[0]);

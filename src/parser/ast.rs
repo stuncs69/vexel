@@ -40,6 +40,10 @@ pub(crate) enum Statement {
         property: String,
         value: Expression,
     },
+    Import {
+        module_name: String,
+        file_path: String,
+    },
 }
 
 #[derive(Debug, Clone)]

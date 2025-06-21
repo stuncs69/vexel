@@ -1,0 +1,22 @@
+# Math module with exported functions
+
+export function add(a, b)
+    return math_add(a, b)
+end
+
+export function multiply(a, b)
+    return math_multiply(a, b)
+end
+
+export function square(x)
+    return multiply(x, x)
+end
+
+# This function is not exported - it's private to the module
+function helper(x)
+    return math_add(x, 1)
+end
+
+export function increment(x)
+    return helper(x)
+end 

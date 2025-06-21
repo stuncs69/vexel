@@ -1,0 +1,9 @@
+# Very basic module test
+import math from './math_module.vx'
+
+print "Direct call:"
+print math.add(5, 3)
+
+print "Assigned to variable:"
+set result math.add(5, 3)
+print result 

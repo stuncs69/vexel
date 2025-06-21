@@ -1,11 +1,15 @@
 use crate::parser::ast::{Expression, Statement};
+use crate::parser::parser::parse_program;
 use crate::stdlib::get_all_native_functions;
 use std::collections::HashMap;
+use std::fs;
+use std::path::Path;
 
 pub struct Runtime {
     variables: HashMap<String, Expression>,
     functions: HashMap<String, (Vec<String>, Vec<Statement>, bool)>,
     native_functions: HashMap<String, fn(Vec<Expression>) -> Option<Expression>>,
+    modules: HashMap<String, HashMap<String, (Vec<String>, Vec<Statement>, bool)>>,
 }
 
 impl Runtime {
@@ -14,6 +18,7 @@ impl Runtime {
             variables: HashMap::new(),
             functions: HashMap::new(),
             native_functions: HashMap::new(),
+            modules: HashMap::new(),
         };
 
         runtime.register_native_functions();
@@ -26,7 +31,7 @@ impl Runtime {
         }
     }
 
-    pub(crate) fn execute(&mut self, statements: Vec<Statement>) {
+    pub(crate) fn execute(&mut self, statements: Vec<Statement>) -> Option<Expression> {
         for statement in statements {
             match statement {
                 Statement::PropertySet {
@@ -85,7 +90,7 @@ impl Runtime {
                                 path.push(property.clone());
                                 current = object;
                             }
-                            _ => return, // Invalid property access
+                            _ => return None, // Invalid property access
                         }
                     };
 
@@ -110,7 +115,9 @@ impl Runtime {
                     if let Some(Expression::Array(elements)) = self.evaluate_expression(iterable) {
                         for element in elements {
                             self.variables.insert(variable.clone(), element);
-                            self.execute(body.clone());
+                            if let Some(return_value) = self.execute(body.clone()) {
+                                return Some(return_value);
+                            }
                         }
                     }
                 }
@@ -120,7 +127,9 @@ impl Runtime {
                     | Some(Expression::Comparison { .. }) =
                         self.evaluate_expression(condition.clone())
                     {
-                        self.execute(body.clone());
+                        if let Some(return_value) = self.execute(body.clone()) {
+                            return Some(return_value);
+                        }
                     }
                 }
                 Statement::Set { var, value } => {
@@ -132,9 +141,9 @@ impl Runtime {
                     name,
                     params,
                     body,
-                    exported: _,
+                    exported,
                 } => {
-                    self.functions.insert(name, (params, body, false));
+                    self.functions.insert(name, (params, body, exported));
                 }
                 Statement::FunctionCall { name, args } => {
                     if let Some(value) =
@@ -148,17 +157,47 @@ impl Runtime {
                         self.print_expression(&value);
                     }
                 }
-                Statement::Return { expr } => {}
+                Statement::Return { expr } => {
+                    return self.evaluate_expression(expr);
+                }
                 Statement::If { condition, body } => {
                     if let Expression::Boolean(true) = self
                         .evaluate_expression(condition)
                         .unwrap_or(Expression::Boolean(false))
                     {
-                        self.execute(body);
+                        if let Some(return_value) = self.execute(body) {
+                            return Some(return_value);
+                        }
+                    }
+                }
+                Statement::Import {
+                    module_name,
+                    file_path,
+                } => {
+                    let resolved_path = if file_path.starts_with("./") {
+                        file_path.strip_prefix("./").unwrap()
+                    } else {
+                        &file_path
+                    };
+
+                    match fs::read_to_string(resolved_path) {
+                        Ok(content) => {
+                            let statements = parse_program(&content);
+
+                            let mut module_runtime = Runtime::new();
+                            module_runtime.execute(statements);
+
+                            self.modules
+                                .insert(module_name, module_runtime.functions.clone());
+                        }
+                        Err(e) => {
+                            eprintln!("Error loading module from '{}': {}", file_path, e);
+                        }
                     }
                 }
             }
         }
+        None
     }
 
     fn print_expression(&self, expr: &Expression) {
@@ -279,6 +318,40 @@ impl Runtime {
                     .map(|arg| self.evaluate_expression(arg).unwrap_or(Expression::Null))
                     .collect();
 
+                if name.contains('.') {
+                    let parts: Vec<&str> = name.split('.').collect();
+                    if parts.len() == 2 {
+                        let module_name = parts[0];
+                        let func_name = parts[1];
+                        if let Some(module_functions) = self.modules.get(module_name) {
+                            if let Some((params, body, exported)) = module_functions.get(func_name)
+                            {
+                                if !exported {
+                                    return None;
+                                }
+                                if params.len() == evaluated_args.len() {
+                                    let mut local_vars = HashMap::new();
+                                    for (param, arg) in
+                                        params.iter().zip(evaluated_args.into_iter())
+                                    {
+                                        local_vars.insert(param.clone(), arg);
+                                    }
+
+                                    let module_funcs_with_exported = module_functions.clone();
+
+                                    let mut nested_runtime = Runtime {
+                                        variables: local_vars,
+                                        functions: module_funcs_with_exported,
+                                        native_functions: self.native_functions.clone(),
+                                        modules: self.modules.clone(),
+                                    };
+                                    return nested_runtime.execute(body.clone());
+                                }
+                            }
+                        }
+                    }
+                }
+
                 if let Some(native_func) = self.native_functions.get(&name) {
                     native_func(evaluated_args)
                 } else if let Some((params, body, _)) = self.functions.get(&name) {
@@ -291,9 +364,9 @@ impl Runtime {
                             variables: local_vars,
                             functions: self.functions.clone(),
                             native_functions: self.native_functions.clone(),
+                            modules: self.modules.clone(),
                         };
-                        nested_runtime.execute(body.clone());
-                        None
+                        nested_runtime.execute(body.clone())
                     } else {
                         None
                     }
@@ -328,10 +401,31 @@ impl Runtime {
                             _ => None,
                         }
                     }
+                    (Some(Expression::StringLiteral(l)), Some(Expression::StringLiteral(r))) => {
+                        match operator.as_str() {
+                            "==" => Some(Expression::Boolean(l == r)),
+                            "!=" => Some(Expression::Boolean(l != r)),
+                            _ => None,
+                        }
+                    }
                     _ => None,
                 }
             }
             Expression::PropertyAccess { object, property } => {
+                if let Expression::Variable(module_name) = object.as_ref() {
+                    if let Some(module_functions) = self.modules.get(module_name) {
+                        if let Some((params, body, exported)) = module_functions.get(&property) {
+                            if !exported {
+                                return None;
+                            }
+                            return Some(Expression::Variable(format!(
+                                "{}::{}",
+                                module_name, property
+                            )));
+                        }
+                    }
+                }
+
                 if let Some(evaluated_object) = self.evaluate_expression(*object) {
                     match evaluated_object {
                         Expression::Object(properties) => {
