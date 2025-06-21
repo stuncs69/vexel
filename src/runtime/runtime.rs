@@ -37,53 +37,68 @@ impl Runtime {
                     let evaluated_value =
                         self.evaluate_expression(value).unwrap_or(Expression::Null);
 
-                    match &object {
-                        Expression::Variable(var_name) => {
-                            if let Some(Expression::Object(mut properties)) =
-                                self.variables.remove(var_name)
-                            {
-                                let mut property_found = false;
+                    fn update_property_in_expr(
+                        expr: &mut Expression,
+                        path: &[String],
+                        value: Expression,
+                    ) -> bool {
+                        if path.is_empty() {
+                            return false;
+                        }
+
+                        if path.len() == 1 {
+                            if let Expression::Object(properties) = expr {
                                 for (key, val) in properties.iter_mut() {
-                                    if key == &property {
-                                        *val = evaluated_value.clone();
-                                        property_found = true;
-                                        break;
+                                    if key == &path[0] {
+                                        *val = value;
+                                        return true;
                                     }
                                 }
-                                if !property_found {
-                                    properties.push((property.clone(), evaluated_value));
-                                }
-
-                                self.variables
-                                    .insert(var_name.clone(), Expression::Object(properties));
+                                properties.push((path[0].clone(), value));
+                                return true;
                             }
+                            return false;
                         }
-                        Expression::PropertyAccess {
-                            object: inner_object,
-                            property: inner_property,
-                        } => {
-                            if let Expression::Variable(parent_var) = &**inner_object {
-                                if let Some(Expression::Object(mut properties)) =
-                                    self.variables.remove(parent_var)
-                                {
-                                    let mut property_found = false;
-                                    for (key, val) in properties.iter_mut() {
-                                        if key == inner_property {
-                                            *val = evaluated_value.clone();
-                                            property_found = true;
-                                            break;
-                                        }
-                                    }
-                                    if !property_found {
-                                        properties.push((inner_property.clone(), evaluated_value));
-                                    }
 
-                                    self.variables
-                                        .insert(parent_var.clone(), Expression::Object(properties));
+                        if let Expression::Object(properties) = expr {
+                            for (key, val) in properties.iter_mut() {
+                                if key == &path[0] {
+                                    return update_property_in_expr(val, &path[1..], value);
                                 }
                             }
+                            let mut new_obj = Expression::Object(vec![]);
+                            update_property_in_expr(&mut new_obj, &path[1..], value);
+                            properties.push((path[0].clone(), new_obj));
+                            return true;
                         }
-                        _ => {}
+                        false
+                    }
+
+                    let mut path = Vec::new();
+                    let mut current = &object;
+                    let root_var = loop {
+                        match current {
+                            Expression::Variable(name) => {
+                                break name.clone();
+                            }
+                            Expression::PropertyAccess { object, property } => {
+                                path.push(property.clone());
+                                current = object;
+                            }
+                            _ => return, // Invalid property access
+                        }
+                    };
+
+                    path.reverse();
+                    path.push(property);
+
+                    if let Some(mut root_value) = self.variables.remove(&root_var) {
+                        update_property_in_expr(&mut root_value, &path, evaluated_value);
+                        self.variables.insert(root_var, root_value);
+                    } else {
+                        let mut new_value = Expression::Object(vec![]);
+                        update_property_in_expr(&mut new_value, &path, evaluated_value);
+                        self.variables.insert(root_var, new_value);
                     }
                 }
 
@@ -193,6 +208,13 @@ impl Runtime {
                 let elements: Vec<String> =
                     arr.iter().map(|e| self.expression_to_string(e)).collect();
                 format!("[{}]", elements.join(", "))
+            }
+            Expression::Object(properties) => {
+                let elements: Vec<String> = properties
+                    .iter()
+                    .map(|(key, value)| format!("{}: {}", key, self.expression_to_string(value)))
+                    .collect();
+                format!("{{{}}}", elements.join(", "))
             }
             Expression::Variable(name) => {
                 if let Some(val) = self.variables.get(name) {

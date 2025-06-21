@@ -58,22 +58,72 @@ fn parse_set_statement(first_line: &str, lines: &mut VecDeque<&str>) -> Statemen
 
     // If the value is an object, collect multiple lines
     if value_str == "{" {
-        let mut object_lines = Vec::new();
+        let mut lines_to_parse = Vec::new();
+        let mut brace_depth = 1;
+
         while let Some(line) = lines.pop_front() {
-            if line == "}" {
-                break;
+            let trimmed = line.trim();
+
+            // Track brace depth (ignoring braces in strings)
+            let mut in_string = false;
+            let mut escaped = false;
+            for ch in trimmed.chars() {
+                if escaped {
+                    escaped = false;
+                    continue;
+                }
+                match ch {
+                    '\\' => escaped = true,
+                    '"' => in_string = !in_string,
+                    '{' if !in_string => brace_depth += 1,
+                    '}' if !in_string => brace_depth -= 1,
+                    _ => {}
+                }
             }
-            object_lines.push(line);
+
+            // Collect lines until we balance the braces
+            if trimmed == "}" && brace_depth == 0 {
+                // This is the final closing brace
+                break;
+            } else if brace_depth == 0 {
+                // Line contains more than just the closing brace
+                lines_to_parse.push(trimmed);
+                break;
+            } else {
+                lines_to_parse.push(trimmed);
+            }
         }
-        value_str = format!("{{ {} }}", object_lines.join(" "));
+
+        // Reconstruct the object string
+        let mut result = String::from("{");
+        for (i, line) in lines_to_parse.iter().enumerate() {
+            if i > 0 {
+                // Add appropriate spacing
+                if !result.ends_with("{") && !result.ends_with(" ") {
+                    result.push_str(" ");
+                }
+            }
+            result.push_str(line);
+        }
+        result.push_str("}");
+
+        value_str = result;
     }
 
     let value = parse_expression(&value_str);
 
     if target.contains('.') {
-        let mut parts = target.split('.').collect::<Vec<&str>>();
-        let property = parts.pop().unwrap().to_string();
-        let object_expr = parse_property_access(&target);
+        let dot_pos = target.rfind('.').unwrap();
+        let object_path = &target[..dot_pos];
+        let property = target[dot_pos + 1..].to_string();
+
+        // Parse the object path - could be a simple variable or a property access chain
+        let object_expr = if object_path.contains('.') {
+            parse_property_access(object_path)
+        } else {
+            Expression::Variable(object_path.to_string())
+        };
+
         return Statement::PropertySet {
             object: object_expr,
             property,
@@ -174,15 +224,24 @@ fn parse_object(expr: &str) -> Expression {
     let content = extract_between(expr, "{", "}");
     let mut properties = Vec::new();
 
-    for part in content.split(',').map(str::trim).filter(|s| !s.is_empty()) {
-        let key_value: Vec<&str> = part.split(':').map(str::trim).collect();
+    let parts = split_top_level(content, ',');
+
+    for part in parts.into_iter().filter_map(|p| {
+        let trimmed = p.trim().to_string();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        }
+    }) {
+        let key_value: Vec<&str> = split_top_level_once(&part, ':');
+
         if key_value.len() != 2 {
             panic!("Invalid object syntax: {}", expr);
         }
-
-        let key = key_value[0].to_string();
-        let value = parse_expression(key_value[1]);
-
+        let key = key_value[0].trim().to_string();
+        let value_str = key_value[1].trim();
+        let value = parse_expression(value_str);
         properties.push((key, value));
     }
 
@@ -227,7 +286,11 @@ fn parse_for_loop(lines: &mut VecDeque<&str>, header: &str) -> Statement {
 }
 
 fn parse_while_loop(lines: &mut VecDeque<&str>, header: &str) -> Statement {
-    let condition = parse_expression(&header[6..].strip_suffix(" start").unwrap().trim());
+    let condition_str = header[6..].trim();
+    let condition_str = condition_str
+        .strip_suffix(" start")
+        .unwrap_or(condition_str);
+    let condition = parse_expression(condition_str);
     let body = parse_block(lines);
 
     Statement::WhileLoop { condition, body }
@@ -235,11 +298,17 @@ fn parse_while_loop(lines: &mut VecDeque<&str>, header: &str) -> Statement {
 
 fn parse_array(expr: &str) -> Expression {
     let content = extract_between(expr, "[", "]");
-    let elements: Vec<Expression> = content
-        .split(',')
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(parse_expression)
+    let elements: Vec<Expression> = split_top_level(content, ',')
+        .into_iter()
+        .filter_map(|p| {
+            let trimmed = p.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        })
+        .map(|s| parse_expression(&s))
         .collect();
 
     Expression::Array(elements)
@@ -256,14 +325,139 @@ fn parse_function_call(expr: &str) -> Expression {
 }
 
 fn extract_between<'a>(s: &'a str, start: &str, end: &str) -> &'a str {
-    s.split(start)
-        .nth(1)
-        .unwrap_or("")
-        .split(end)
-        .next()
-        .unwrap_or("")
+    let start_pos = match s.find(start) {
+        Some(pos) => pos + start.len(),
+        None => return "",
+    };
+
+    if (start == "{" && end == "}") || (start == "[" && end == "]") {
+        let mut depth = 1;
+        let mut in_string = false;
+        let mut escaped = false;
+        let chars: Vec<char> = s[start_pos..].chars().collect();
+
+        for (i, &ch) in chars.iter().enumerate() {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+
+            match ch {
+                '\\' => escaped = true,
+                '"' => in_string = !in_string,
+                c if c.to_string() == start && !in_string => depth += 1,
+                c if c.to_string() == end && !in_string => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return &s[start_pos..start_pos + i];
+                    }
+                }
+                _ => {}
+            }
+        }
+        return &s[start_pos..]; // Return rest if no matching end found
+    }
+
+    s[start_pos..].split(end).next().unwrap_or(&s[start_pos..])
 }
 
 fn extract_before<'a>(s: &'a str, delimiter: &str) -> &'a str {
     s.split(delimiter).next().unwrap_or(s)
+}
+
+fn split_top_level(s: &str, delimiter: char) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut current = String::new();
+    let mut depth_curly = 0;
+    let mut depth_square = 0;
+    let mut depth_paren = 0;
+    let mut in_string = false;
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '"' => {
+                current.push(c);
+                let prev_backslash = current.chars().rev().nth(1) == Some('\\');
+                if !prev_backslash {
+                    in_string = !in_string;
+                }
+            }
+            '{' if !in_string => {
+                depth_curly += 1;
+                current.push(c);
+            }
+            '}' if !in_string => {
+                depth_curly -= 1;
+                current.push(c);
+            }
+            '[' if !in_string => {
+                depth_square += 1;
+                current.push(c);
+            }
+            ']' if !in_string => {
+                depth_square -= 1;
+                current.push(c);
+            }
+            '(' if !in_string => {
+                depth_paren += 1;
+                current.push(c);
+            }
+            ')' if !in_string => {
+                depth_paren -= 1;
+                current.push(c);
+            }
+            d if d == delimiter
+                && !in_string
+                && depth_curly == 0
+                && depth_square == 0
+                && depth_paren == 0 =>
+            {
+                parts.push(current.trim().to_string());
+                current.clear();
+            }
+            _ => current.push(c),
+        }
+    }
+    if !current.trim().is_empty() {
+        parts.push(current.trim().to_string());
+    }
+    parts
+}
+
+fn split_top_level_once(s: &str, delimiter: char) -> Vec<&str> {
+    let mut depth_curly = 0;
+    let mut depth_square = 0;
+    let mut depth_paren = 0;
+    let mut in_string = false;
+    for (i, c) in s.chars().enumerate() {
+        match c {
+            '"' => {
+                let mut backslashes = 0;
+                let mut idx = i;
+                while idx > 0 && s.as_bytes()[idx - 1] == b'\\' {
+                    backslashes += 1;
+                    idx -= 1;
+                }
+                if backslashes % 2 == 0 {
+                    in_string = !in_string;
+                }
+            }
+            '{' if !in_string => depth_curly += 1,
+            '}' if !in_string => depth_curly -= 1,
+            '[' if !in_string => depth_square += 1,
+            ']' if !in_string => depth_square -= 1,
+            '(' if !in_string => depth_paren += 1,
+            ')' if !in_string => depth_paren -= 1,
+            d if d == delimiter
+                && !in_string
+                && depth_curly == 0
+                && depth_square == 0
+                && depth_paren == 0 =>
+            {
+                return vec![s[..i].trim(), s[i + 1..].trim()];
+            }
+            _ => {}
+        }
+    }
+    vec![s.trim()]
 }

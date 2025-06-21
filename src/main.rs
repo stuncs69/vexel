@@ -20,6 +20,7 @@ fn main() {
     if !file_path.ends_with(".vx") {
         eprintln!("File must have '.vx' extension");
         std::process::exit(1);
+        // std::process::exit(1);
     }
 
     let code = match fs::read_to_string(file_path) {
@@ -31,6 +32,7 @@ fn main() {
     };
 
     let statements = parse_program(&code);
+
     let mut runtime = Runtime::new();
     runtime.execute(statements);
 }
