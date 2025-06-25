@@ -7,3 +7,14 @@ print math.add(5, 3)
 print "Assigned to variable:"
 set result math.add(5, 3)
 print result 
+
+
+function get_website(index) start
+    set http_result http_get("https://jsonplaceholder.typicode.com/users")
+    set copy array_get(json_parse(http_result), index)
+    return copy.website
+end
+
+print get_website(1)
+
+for x in array_range(100)

@@ -44,6 +44,10 @@ pub(crate) enum Statement {
         module_name: String,
         file_path: String,
     },
+    Test {
+        name: String,
+        body: Vec<Statement>,
+    },
 }
 
 #[derive(Debug, Clone)]

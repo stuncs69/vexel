@@ -195,6 +195,17 @@ impl Runtime {
                         }
                     }
                 }
+                Statement::Test { name, body } => {
+                    println!("Running test: {}", name);
+                    let mut nested_runtime = Runtime {
+                        variables: HashMap::new(),
+                        functions: self.functions.clone(),
+                        native_functions: self.native_functions.clone(),
+                        modules: self.modules.clone(),
+                    };
+                    let _ = nested_runtime.execute(body);
+                    println!("Test '{}' finished", name);
+                }
             }
         }
         None

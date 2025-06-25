@@ -3,6 +3,7 @@ use crate::parser::ast;
 pub mod array;
 pub mod core;
 pub mod debug;
+pub mod json;
 pub mod math;
 pub mod net;
 mod object;
@@ -20,5 +21,6 @@ pub fn get_all_native_functions() -> Vec<(
     functions.extend(net::http_functions());
     functions.extend(core::core_functions());
     functions.extend(object::object_functions());
+    functions.extend(json::json_functions());
     functions
 }

@@ -25,6 +25,7 @@ fn parse_block(lines: &mut VecDeque<&str>) -> Vec<Statement> {
             Some("for") => statements.push(parse_for_loop(lines, line)),
             Some("while") => statements.push(parse_while_loop(lines, line)),
             Some("import") => statements.push(parse_import_statement(line)),
+            Some("test") => statements.push(parse_test_block(lines, line)),
             Some("end") => break,
             _ => {
                 if line.contains('(') && line.contains(')') {
@@ -38,10 +39,11 @@ fn parse_block(lines: &mut VecDeque<&str>) -> Vec<Statement> {
 }
 
 fn parse_function_call_statement(expr: &str) -> Statement {
-    // just do the same lol
     let name = extract_before(expr, "(").trim().to_string();
-    let args = extract_between(expr, "(", ")")
-        .split(',')
+    let args_str = extract_between(expr, "(", ")");
+    let args = split_top_level(args_str, ',')
+        .into_iter()
+        .filter(|arg| !arg.trim().is_empty())
         .map(|arg| parse_expression(arg.trim()))
         .collect();
 
@@ -351,12 +353,34 @@ fn parse_array(expr: &str) -> Expression {
 
 fn parse_function_call(expr: &str) -> Expression {
     let name = extract_before(expr, "(").trim().to_string();
-    let args = extract_between(expr, "(", ")")
-        .split(',')
+    let args_str = extract_between(expr, "(", ")");
+    let args = split_top_level(args_str, ',')
+        .into_iter()
+        .filter(|arg| !arg.trim().is_empty())
         .map(|arg| parse_expression(arg.trim()))
         .collect();
 
     Expression::FunctionCall { name, args }
+}
+
+fn parse_test_block(lines: &mut VecDeque<&str>, header: &str) -> Statement {
+    // Expected syntax: test "name" start
+    // Extract name inside quotes
+    let name_start = header.find('"').unwrap_or(0);
+    let name_end = header[name_start + 1..]
+        .find('"')
+        .map(|idx| idx + name_start + 1)
+        .unwrap_or(name_start);
+    let name = if name_start > 0 && name_end > name_start {
+        header[name_start + 1..name_end].to_string()
+    } else {
+        "Unnamed Test".to_string()
+    };
+
+    // Body until matching 'end'
+    let body = parse_block(lines);
+
+    Statement::Test { name, body }
 }
 
 fn extract_between<'a>(s: &'a str, start: &str, end: &str) -> &'a str {
@@ -365,7 +389,9 @@ fn extract_between<'a>(s: &'a str, start: &str, end: &str) -> &'a str {
         None => return "",
     };
 
-    if (start == "{" && end == "}") || (start == "[" && end == "]") {
+    // Handle nested structures for braces, brackets, and parentheses
+    if (start == "{" && end == "}") || (start == "[" && end == "]") || (start == "(" && end == ")")
+    {
         let mut depth = 1;
         let mut in_string = false;
         let mut escaped = false;
@@ -390,7 +416,7 @@ fn extract_between<'a>(s: &'a str, start: &str, end: &str) -> &'a str {
                 _ => {}
             }
         }
-        return &s[start_pos..]; // Return rest if no matching end found
+        return &s[start_pos..];
     }
 
     s[start_pos..].split(end).next().unwrap_or(&s[start_pos..])
