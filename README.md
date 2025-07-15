@@ -58,9 +58,10 @@ target/release/vexel script.vx
 - [x] Add more built-in functions
 - [x] Implement loops (`for`, `while`)
 - [ ] Improve error handling
+- [ ] Add importing files support
 - [ ] Add package management support
 - [x] Array support
-- [ ] Add object support
+- [x] Add object support
 - [x] Add REPL
 
 ## Contributing
