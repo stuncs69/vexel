@@ -11,6 +11,8 @@ Vexel is a high-performance, JIT-compiled scripting language designed for effici
 ## Example Code
 
 ```bash
+import custom from "./import.vx"
+
 set x 5
 set greeting "hello"
 set is_active true
@@ -28,6 +30,8 @@ if is_active != false start
     set string_array array_to_string(array)
     squirrelsay(string_array)
 end
+
+custom.is_hello(greeting) # True
 
 ```
 
