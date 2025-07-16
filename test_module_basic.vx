@@ -17,4 +17,6 @@ end
 
 print get_website(1)
 
-for x in array_range(100)
+for x in array_range(100) start
+    print x
+end

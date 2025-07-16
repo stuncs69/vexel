@@ -455,4 +455,19 @@ impl Runtime {
             }
         }
     }
+
+    pub fn call_function(&mut self, name: &str, args: Vec<Expression>) -> Option<Expression> {
+        self.evaluate_expression(Expression::FunctionCall {
+            name: name.to_string(),
+            args,
+        })
+    }
+
+    pub fn get_variable(&self, name: &str) -> Option<Expression> {
+        self.variables.get(name).cloned()
+    }
+
+    pub fn has_function(&self, name: &str) -> bool {
+        self.functions.contains_key(name)
+    }
 }

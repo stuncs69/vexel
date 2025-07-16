@@ -1,0 +1,6 @@
+set path "/hello/{name}"
+set method "GET"
+
+export function request(name) start
+    return string_concat("Hello, ", name)
+end 

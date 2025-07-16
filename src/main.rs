@@ -1,6 +1,7 @@
 mod parser;
 mod runtime;
 mod stdlib;
+mod webcore;
 use parser::parser::parse_program;
 use runtime::repl::repl;
 use runtime::runtime::Runtime;
@@ -13,6 +14,12 @@ fn main() {
     if args.len() < 2 {
         println!("Vexel REPL c: (with extra object support)");
         repl();
+    }
+
+    if args[1] == "webcore" {
+        let folder = if args.len() >= 3 { &args[2] } else { "./" };
+        webcore::run(folder);
+        return;
     }
 
     let file_path = &args[1];
