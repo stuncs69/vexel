@@ -565,6 +565,6 @@ impl Runtime {
     }
 
     pub fn has_function(&self, name: &str) -> bool {
-        self.functions.contains_key(name)
+        self.functions.borrow().contains_key(name)
     }
 }
