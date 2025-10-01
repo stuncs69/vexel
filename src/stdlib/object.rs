@@ -131,5 +131,6 @@ fn object_to_string_impl(expr: &Expression) -> String {
         Expression::FunctionCall { .. } => "\"<function call>\"".to_string(),
         Expression::Comparison { .. } => "\"<comparison>\"".to_string(),
         Expression::PropertyAccess { .. } => "\"<property access>\"".to_string(),
+        Expression::StringInterpolation { .. } => "\"<string interpolation>\"".to_string(),
     }
 }

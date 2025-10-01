@@ -1,24 +1,28 @@
-use crate::parser::ast::{Expression, Statement};
-use crate::parser::parser::parse_program;
+use crate::parser::ast::{Expression, InterpolationPart, Statement};
+use crate::parser::parser::try_parse_program;
 use crate::stdlib::get_all_native_functions;
-use std::collections::HashMap;
+use rustc_hash::FxHashMap as HashMap;
+use std::cell::RefCell;
 use std::fs;
-use std::path::Path;
+use std::rc::Rc;
 
 pub struct Runtime {
     variables: HashMap<String, Expression>,
-    functions: HashMap<String, (Vec<String>, Vec<Statement>, bool)>,
-    native_functions: HashMap<String, fn(Vec<Expression>) -> Option<Expression>>,
-    modules: HashMap<String, HashMap<String, (Vec<String>, Vec<Statement>, bool)>>,
+    functions: Rc<RefCell<HashMap<String, (Vec<String>, Vec<Statement>, bool)>>>,
+    native_functions: Rc<HashMap<String, fn(Vec<Expression>) -> Option<Expression>>>,
+    modules: Rc<RefCell<HashMap<String, HashMap<String, (Vec<String>, Vec<Statement>, bool)>>>>,
+    module_cache_by_path:
+        Rc<RefCell<HashMap<String, HashMap<String, (Vec<String>, Vec<Statement>, bool)>>>>,
 }
 
 impl Runtime {
     pub(crate) fn new() -> Self {
         let mut runtime = Runtime {
-            variables: HashMap::new(),
-            functions: HashMap::new(),
-            native_functions: HashMap::new(),
-            modules: HashMap::new(),
+            variables: HashMap::default(),
+            functions: Rc::new(RefCell::new(HashMap::default())),
+            native_functions: Rc::new(HashMap::default()),
+            modules: Rc::new(RefCell::new(HashMap::default())),
+            module_cache_by_path: Rc::new(RefCell::new(HashMap::default())),
         };
 
         runtime.register_native_functions();
@@ -26,9 +30,11 @@ impl Runtime {
     }
 
     fn register_native_functions(&mut self) {
+        let mut map = HashMap::default();
         for (name, func) in get_all_native_functions() {
-            self.native_functions.insert(name.to_string(), func);
+            map.insert(name.to_string(), func);
         }
+        self.native_functions = Rc::new(map);
     }
 
     pub(crate) fn execute(&mut self, statements: Vec<Statement>) -> Option<Expression> {
@@ -143,7 +149,9 @@ impl Runtime {
                     body,
                     exported,
                 } => {
-                    self.functions.insert(name, (params, body, exported));
+                    self.functions
+                        .borrow_mut()
+                        .insert(name, (params, body, exported));
                 }
                 Statement::FunctionCall { name, args } => {
                     if let Some(value) =
@@ -175,20 +183,41 @@ impl Runtime {
                     file_path,
                 } => {
                     let resolved_path = if file_path.starts_with("./") {
-                        file_path.strip_prefix("./").unwrap()
+                        file_path.strip_prefix("./").unwrap().to_string()
                     } else {
-                        &file_path
+                        file_path.clone()
                     };
 
-                    match fs::read_to_string(resolved_path) {
+                    if let Some(cached) = self
+                        .module_cache_by_path
+                        .borrow()
+                        .get(&resolved_path)
+                        .cloned()
+                    {
+                        self.modules.borrow_mut().insert(module_name, cached);
+                        continue;
+                    }
+
+                    match fs::read_to_string(&resolved_path) {
                         Ok(content) => {
-                            let statements = parse_program(&content);
+                            let statements = match try_parse_program(&content) {
+                                Ok(stmts) => stmts,
+                                Err(e) => {
+                                    eprintln!("{}", e);
+                                    Vec::new()
+                                }
+                            };
 
                             let mut module_runtime = Runtime::new();
                             module_runtime.execute(statements);
 
+                            let funcs_clone = module_runtime.functions.borrow().clone();
                             self.modules
-                                .insert(module_name, module_runtime.functions.clone());
+                                .borrow_mut()
+                                .insert(module_name.clone(), funcs_clone.clone());
+                            self.module_cache_by_path
+                                .borrow_mut()
+                                .insert(resolved_path, funcs_clone);
                         }
                         Err(e) => {
                             eprintln!("Error loading module from '{}': {}", file_path, e);
@@ -198,10 +227,11 @@ impl Runtime {
                 Statement::Test { name, body } => {
                     println!("Running test: {}", name);
                     let mut nested_runtime = Runtime {
-                        variables: HashMap::new(),
+                        variables: HashMap::default(),
                         functions: self.functions.clone(),
                         native_functions: self.native_functions.clone(),
                         modules: self.modules.clone(),
+                        module_cache_by_path: self.module_cache_by_path.clone(),
                     };
                     let _ = nested_runtime.execute(body);
                     println!("Test '{}' finished", name);
@@ -216,6 +246,28 @@ impl Runtime {
             Expression::Number(n) => println!("{}", n),
             Expression::Boolean(b) => println!("{}", b),
             Expression::StringLiteral(s) => println!("{}", s),
+            Expression::StringInterpolation { parts } => {
+                let mut result = String::new();
+                for part in parts {
+                    match part {
+                        InterpolationPart::Text(text) => {
+                            result.push_str(text);
+                        }
+                        InterpolationPart::Expression(expr) => {
+                            if let Some(evaluated) = self.evaluate_expression(expr.clone()) {
+                                match evaluated {
+                                    Expression::StringLiteral(s) => result.push_str(&s),
+                                    Expression::Number(n) => result.push_str(&n.to_string()),
+                                    Expression::Boolean(b) => result.push_str(&b.to_string()),
+                                    Expression::Null => result.push_str("null"),
+                                    _ => result.push_str(&self.expression_to_string(&evaluated)),
+                                }
+                            }
+                        }
+                    }
+                }
+                println!("{}", result);
+            }
             Expression::Null => println!("null"),
             Expression::Array(arr) => {
                 let elements: Vec<String> =
@@ -253,6 +305,29 @@ impl Runtime {
             Expression::Number(n) => n.to_string(),
             Expression::Boolean(b) => b.to_string(),
             Expression::StringLiteral(s) => format!("\"{}\"", s),
+            Expression::StringInterpolation { parts } => {
+                let mut result = String::new();
+                for part in parts {
+                    match part {
+                        InterpolationPart::Text(text) => {
+                            result.push_str(text);
+                        }
+                        InterpolationPart::Expression(expr) => {
+                            if let Some(evaluated) = self.evaluate_expression(expr.clone()) {
+                                // For string conversion, we want the raw value, not quoted
+                                match evaluated {
+                                    Expression::StringLiteral(s) => result.push_str(&s),
+                                    Expression::Number(n) => result.push_str(&n.to_string()),
+                                    Expression::Boolean(b) => result.push_str(&b.to_string()),
+                                    Expression::Null => result.push_str("null"),
+                                    _ => result.push_str(&self.expression_to_string(&evaluated)),
+                                }
+                            }
+                        }
+                    }
+                }
+                format!("\"{}\"", result)
+            }
             Expression::Null => "null".to_string(),
             Expression::Array(arr) => {
                 let elements: Vec<String> =
@@ -313,16 +388,30 @@ impl Runtime {
             Expression::Null => Some(Expression::Null),
             Expression::Boolean(b) => Some(Expression::Boolean(b)),
             Expression::StringLiteral(s) => Some(Expression::StringLiteral(s)),
-            Expression::Variable(name) => {
-                if let Some(Expression::Object(properties)) = self.variables.get(&name) {
-                    let mut new_properties = Vec::new();
-                    for (key, value) in properties {
-                        new_properties.push((key.clone(), value.clone()));
+            Expression::StringInterpolation { parts } => {
+                let mut result = String::new();
+                for part in parts {
+                    match part {
+                        InterpolationPart::Text(text) => {
+                            result.push_str(&text);
+                        }
+                        InterpolationPart::Expression(expr) => {
+                            if let Some(evaluated) = self.evaluate_expression(expr) {
+                                // For interpolation, we want raw values without quotes
+                                match evaluated {
+                                    Expression::StringLiteral(s) => result.push_str(&s),
+                                    Expression::Number(n) => result.push_str(&n.to_string()),
+                                    Expression::Boolean(b) => result.push_str(&b.to_string()),
+                                    Expression::Null => result.push_str("null"),
+                                    _ => result.push_str(&self.expression_to_string(&evaluated)),
+                                }
+                            }
+                        }
                     }
-                    return Some(Expression::Object(new_properties));
                 }
-                self.variables.get(&name).cloned()
+                Some(Expression::StringLiteral(result))
             }
+            Expression::Variable(name) => self.variables.get(&name).cloned(),
             Expression::FunctionCall { name, args } => {
                 let evaluated_args: Vec<Expression> = args
                     .into_iter()
@@ -334,27 +423,34 @@ impl Runtime {
                     if parts.len() == 2 {
                         let module_name = parts[0];
                         let func_name = parts[1];
-                        if let Some(module_functions) = self.modules.get(module_name) {
+                        if let Some(module_functions) = self.modules.borrow().get(module_name) {
                             if let Some((params, body, exported)) = module_functions.get(func_name)
                             {
                                 if !exported {
                                     return None;
                                 }
                                 if params.len() == evaluated_args.len() {
-                                    let mut local_vars = HashMap::new();
+                                    let mut local_vars = HashMap::default();
                                     for (param, arg) in
                                         params.iter().zip(evaluated_args.into_iter())
                                     {
                                         local_vars.insert(param.clone(), arg);
                                     }
 
-                                    let module_funcs_with_exported = module_functions.clone();
+                                    let module_funcs_with_exported =
+                                        Rc::new(RefCell::new(HashMap::default()));
+                                    for (k, v) in module_functions.iter() {
+                                        module_funcs_with_exported
+                                            .borrow_mut()
+                                            .insert(k.clone(), v.clone());
+                                    }
 
                                     let mut nested_runtime = Runtime {
                                         variables: local_vars,
                                         functions: module_funcs_with_exported,
                                         native_functions: self.native_functions.clone(),
                                         modules: self.modules.clone(),
+                                        module_cache_by_path: self.module_cache_by_path.clone(),
                                     };
                                     return nested_runtime.execute(body.clone());
                                 }
@@ -365,9 +461,9 @@ impl Runtime {
 
                 if let Some(native_func) = self.native_functions.get(&name) {
                     native_func(evaluated_args)
-                } else if let Some((params, body, _)) = self.functions.get(&name) {
+                } else if let Some((params, body, _)) = self.functions.borrow().get(&name) {
                     if params.len() == evaluated_args.len() {
-                        let mut local_vars = HashMap::new();
+                        let mut local_vars = HashMap::default();
                         for (param, arg) in params.iter().zip(evaluated_args.into_iter()) {
                             local_vars.insert(param.clone(), arg);
                         }
@@ -376,6 +472,7 @@ impl Runtime {
                             functions: self.functions.clone(),
                             native_functions: self.native_functions.clone(),
                             modules: self.modules.clone(),
+                            module_cache_by_path: self.module_cache_by_path.clone(),
                         };
                         nested_runtime.execute(body.clone())
                     } else {
@@ -424,8 +521,8 @@ impl Runtime {
             }
             Expression::PropertyAccess { object, property } => {
                 if let Expression::Variable(module_name) = object.as_ref() {
-                    if let Some(module_functions) = self.modules.get(module_name) {
-                        if let Some((params, body, exported)) = module_functions.get(&property) {
+                    if let Some(module_functions) = self.modules.borrow().get(module_name) {
+                        if let Some((_, _, exported)) = module_functions.get(&property) {
                             if !exported {
                                 return None;
                             }

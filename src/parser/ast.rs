@@ -51,10 +51,17 @@ pub(crate) enum Statement {
 }
 
 #[derive(Debug, Clone)]
+pub enum InterpolationPart {
+    Text(String),
+    Expression(Expression),
+}
+
+#[derive(Debug, Clone)]
 pub(crate) enum Expression {
     Number(i32),
     Boolean(bool),
     StringLiteral(String),
+    StringInterpolation { parts: Vec<InterpolationPart> },
     Variable(String),
     FunctionCall {
         name: String,

@@ -5,7 +5,9 @@ pub fn string_functions() -> Vec<(&'static str, fn(Vec<Expression>) -> Option<Ex
         ("string_length", |args: Vec<Expression>| {
             if args.len() == 1 {
                 match &args[0] {
-                    Expression::StringLiteral(s) => Some(Expression::Number(s.len() as i32)),
+                    Expression::StringLiteral(s) => {
+                        Some(Expression::Number(s.chars().count() as i32))
+                    }
                     _ => None,
                 }
             } else {
@@ -26,6 +28,28 @@ pub fn string_functions() -> Vec<(&'static str, fn(Vec<Expression>) -> Option<Ex
                 None
             }
         }),
+        ("string_from_number", |args: Vec<Expression>| {
+            if args.len() == 1 {
+                match &args[0] {
+                    Expression::Number(n) => Some(Expression::StringLiteral(n.to_string())),
+                    _ => None,
+                }
+            } else {
+                None
+            }
+        }),
+        ("number_from_string", |args: Vec<Expression>| {
+            if args.len() == 1 {
+                match &args[0] {
+                    Expression::StringLiteral(s) => {
+                        Some(Expression::Number(s.parse::<i32>().unwrap()))
+                    }
+                    _ => None,
+                }
+            } else {
+                None
+            }
+        }),
         ("string_substring", |args: Vec<Expression>| {
             if args.len() == 3 {
                 match (&args[0], &args[1], &args[2]) {
@@ -36,10 +60,10 @@ pub fn string_functions() -> Vec<(&'static str, fn(Vec<Expression>) -> Option<Ex
                     ) => {
                         let start = *start as usize;
                         let length = *length as usize;
-                        if start + length <= s.len() {
-                            Some(Expression::StringLiteral(
-                                s[start..start + length].to_string(),
-                            ))
+                        let chars: Vec<char> = s.chars().collect();
+                        if start <= chars.len() && start + length <= chars.len() {
+                            let substr: String = chars[start..start + length].iter().collect();
+                            Some(Expression::StringLiteral(substr))
                         } else {
                             None
                         }

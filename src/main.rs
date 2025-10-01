@@ -1,8 +1,7 @@
 mod parser;
 mod runtime;
 mod stdlib;
-mod webcore;
-use parser::parser::parse_program;
+use parser::parser::try_parse_program;
 use runtime::repl::repl;
 use runtime::runtime::Runtime;
 use std::env;
@@ -18,7 +17,6 @@ fn main() {
 
     if args[1] == "webcore" {
         let folder = if args.len() >= 3 { &args[2] } else { "./" };
-        webcore::run(folder);
         return;
     }
 
@@ -38,8 +36,14 @@ fn main() {
         }
     };
 
-    let statements = parse_program(&code);
-
-    let mut runtime = Runtime::new();
-    runtime.execute(statements);
+    match try_parse_program(&code) {
+        Ok(statements) => {
+            let mut runtime = Runtime::new();
+            runtime.execute(statements);
+        }
+        Err(e) => {
+            eprintln!("{}", e);
+            std::process::exit(1);
+        }
+    }
 }
