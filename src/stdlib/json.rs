@@ -46,9 +46,9 @@ fn value_to_expression(value: &Value) -> Option<Expression> {
             Some(Expression::Array(elements))
         }
         Value::Object(map) => {
-            let mut props = Vec::new();
+            let mut props = std::collections::HashMap::new();
             for (k, v) in map {
-                props.push((k.clone(), value_to_expression(v)?));
+                props.insert(k.clone(), value_to_expression(v)?);
             }
             Some(Expression::Object(props))
         }

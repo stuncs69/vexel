@@ -1,6 +1,7 @@
 use crate::parser::ast::{Expression, InterpolationPart, Statement};
 use crate::parser::parser::try_parse_program;
 use crate::stdlib::get_all_native_functions;
+use crate::stdlib::thread; // added for thread snapshots
 use rustc_hash::FxHashMap as HashMap;
 use std::cell::RefCell;
 use std::fs;
@@ -59,27 +60,19 @@ impl Runtime {
 
                         if path.len() == 1 {
                             if let Expression::Object(properties) = expr {
-                                for (key, val) in properties.iter_mut() {
-                                    if key == &path[0] {
-                                        *val = value;
-                                        return true;
-                                    }
-                                }
-                                properties.push((path[0].clone(), value));
+                                properties.insert(path[0].clone(), value);
                                 return true;
                             }
                             return false;
                         }
 
                         if let Expression::Object(properties) = expr {
-                            for (key, val) in properties.iter_mut() {
-                                if key == &path[0] {
-                                    return update_property_in_expr(val, &path[1..], value);
-                                }
+                            if let Some(val) = properties.get_mut(&path[0]) {
+                                return update_property_in_expr(val, &path[1..], value);
                             }
-                            let mut new_obj = Expression::Object(vec![]);
+                            let mut new_obj = Expression::Object(std::collections::HashMap::new());
                             update_property_in_expr(&mut new_obj, &path[1..], value);
-                            properties.push((path[0].clone(), new_obj));
+                            properties.insert(path[0].clone(), new_obj);
                             return true;
                         }
                         false
@@ -107,7 +100,7 @@ impl Runtime {
                         update_property_in_expr(&mut root_value, &path, evaluated_value);
                         self.variables.insert(root_var, root_value);
                     } else {
-                        let mut new_value = Expression::Object(vec![]);
+                        let mut new_value = Expression::Object(std::collections::HashMap::new());
                         update_property_in_expr(&mut new_value, &path, evaluated_value);
                         self.variables.insert(root_var, new_value);
                     }
@@ -152,6 +145,8 @@ impl Runtime {
                     self.functions
                         .borrow_mut()
                         .insert(name, (params, body, exported));
+                    // update thread functions snapshot after definition
+                    thread::update_functions_snapshot(self.functions.borrow().clone());
                 }
                 Statement::FunctionCall { name, args } => {
                     if let Some(value) =
@@ -218,6 +213,9 @@ impl Runtime {
                             self.module_cache_by_path
                                 .borrow_mut()
                                 .insert(resolved_path, funcs_clone);
+                            // update thread modules and cache snapshots after import
+                            thread::update_modules_snapshot(self.modules.borrow().clone());
+                            thread::update_module_cache_snapshot(self.module_cache_by_path.borrow().clone());
                         }
                         Err(e) => {
                             eprintln!("Error loading module from '{}': {}", file_path, e);
@@ -372,7 +370,7 @@ impl Runtime {
                 Some(Expression::Array(evaluated_elements))
             }
             Expression::Object(properties) => {
-                let evaluated_properties: Vec<(String, Expression)> = properties
+                let evaluated_properties: std::collections::HashMap<String, Expression> = properties
                     .into_iter()
                     .filter_map(|(key, value)| {
                         if let Some(evaluated_value) = self.evaluate_expression(value) {
@@ -537,12 +535,7 @@ impl Runtime {
                 if let Some(evaluated_object) = self.evaluate_expression(*object) {
                     match evaluated_object {
                         Expression::Object(properties) => {
-                            for (key, value) in properties {
-                                if key == property {
-                                    return Some(value);
-                                }
-                            }
-                            None
+                            properties.get(&property).cloned()
                         }
                         _ => None,
                     }
@@ -566,5 +559,18 @@ impl Runtime {
 
     pub fn has_function(&self, name: &str) -> bool {
         self.functions.borrow().contains_key(name)
+    }
+
+    pub fn set_functions_snapshot(&mut self, map: HashMap<String, (Vec<String>, Vec<Statement>, bool)>) {
+        self.functions = Rc::new(RefCell::new(map));
+    }
+
+    pub fn set_modules_snapshot(
+        &mut self,
+        modules: HashMap<String, HashMap<String, (Vec<String>, Vec<Statement>, bool)>>,
+        module_cache: HashMap<String, HashMap<String, (Vec<String>, Vec<Statement>, bool)>>,
+    ) {
+        self.modules = Rc::new(RefCell::new(modules));
+        self.module_cache_by_path = Rc::new(RefCell::new(module_cache));
     }
 }

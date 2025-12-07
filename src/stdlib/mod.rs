@@ -9,6 +9,7 @@ pub mod math;
 pub mod net;
 mod object;
 pub mod string;
+pub mod thread;
 
 pub fn get_all_native_functions() -> Vec<(
     &'static str,
@@ -24,5 +25,6 @@ pub fn get_all_native_functions() -> Vec<(
     functions.extend(object::object_functions());
     functions.extend(json::json_functions());
     functions.extend(fs::fs_functions());
+    functions.extend(thread::thread_functions());
     functions
 }

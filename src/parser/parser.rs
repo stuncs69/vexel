@@ -299,7 +299,7 @@ fn parse_expression(expr: &str) -> Expression {
 
 fn parse_object(expr: &str) -> Expression {
     let content = extract_between(expr, "{", "}");
-    let mut properties = Vec::new();
+    let mut properties = std::collections::HashMap::new();
 
     let parts = split_top_level(content, ',');
 
@@ -319,7 +319,7 @@ fn parse_object(expr: &str) -> Expression {
         let key = key_value[0].trim().to_string();
         let value_str = key_value[1].trim();
         let value = parse_expression(value_str);
-        properties.push((key, value));
+        properties.insert(key, value);
     }
 
     Expression::Object(properties)

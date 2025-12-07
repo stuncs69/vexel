@@ -1,5 +1,7 @@
 // src/parser/ast.rs
 
+use std::collections::HashMap;
+
 #[derive(Debug, Clone)]
 pub(crate) enum Statement {
     Set {
@@ -74,7 +76,7 @@ pub(crate) enum Expression {
     },
     Null,
     Array(Vec<Expression>),
-    Object(Vec<(String, Expression)>),
+    Object(HashMap<String, Expression>),
     PropertyAccess {
         object: Box<Expression>,
         property: String,
