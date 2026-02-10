@@ -51,11 +51,13 @@ pub fn core_functions() -> Vec<(&'static str, fn(Vec<Expression>) -> Option<Expr
             if args.len() == 1 {
                 match &args[0] {
                     Expression::StringLiteral(command) => {
-                        let output = std::process::Command::new(command)
-                            .output()
-                            .expect("failed to execute process");
-                        let stdout = String::from_utf8_lossy(&output.stdout);
-                        Some(Expression::StringLiteral(stdout.to_string()))
+                        match std::process::Command::new(command).output() {
+                            Ok(output) => {
+                                let stdout = String::from_utf8_lossy(&output.stdout);
+                                Some(Expression::StringLiteral(stdout.to_string()))
+                            }
+                            Err(_) => None,
+                        }
                     }
                     _ => None,
                 }

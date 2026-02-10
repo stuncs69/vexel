@@ -34,14 +34,25 @@ pub fn string_functions() -> Vec<(&'static str, fn(Vec<Expression>) -> Option<Ex
                         Expression::Number(start),
                         Expression::Number(length),
                     ) => {
-                        let start = *start as usize;
-                        let length = *length as usize;
-                        if start + length <= s.len() {
-                            Some(Expression::StringLiteral(
-                                s[start..start + length].to_string(),
-                            ))
-                        } else {
+                        if *start < 0 || *length < 0 {
                             None
+                        } else {
+                            let start = *start as usize;
+                            let length = *length as usize;
+                            let char_count = s.chars().count();
+                            if start > char_count {
+                                None
+                            } else if let Some(end) = start.checked_add(length) {
+                                if end > char_count {
+                                    None
+                                } else {
+                                    Some(Expression::StringLiteral(
+                                        s.chars().skip(start).take(length).collect(),
+                                    ))
+                                }
+                            } else {
+                                None
+                            }
                         }
                     }
                     _ => None,

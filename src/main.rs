@@ -14,6 +14,7 @@ fn main() {
     if args.len() < 2 {
         println!("Vexel REPL c: (with extra object support)");
         repl();
+        return;
     }
 
     if args[1] == "webcore" {

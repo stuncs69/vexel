@@ -12,7 +12,9 @@ pub fn debug_functions() -> Vec<(&'static str, fn(Vec<Expression>) -> Option<Exp
             }
         }),
         ("dump", |args: Vec<Expression>| {
-            println!("{:?}", args[0]);
+            if let Some(value) = args.first() {
+                println!("{:?}", value);
+            }
             None
         }),
         ("assert_equal", |args: Vec<Expression>| {
