@@ -78,3 +78,47 @@ fn expression_to_value(expr: &Expression) -> Option<Value> {
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::json_functions;
+    use crate::parser::ast::Expression;
+    use std::collections::HashMap;
+
+    fn json_fn(name: &str) -> fn(Vec<Expression>) -> Option<Expression> {
+        json_functions()
+            .into_iter()
+            .find(|(n, _)| *n == name)
+            .map(|(_, f)| f)
+            .expect("missing json function")
+    }
+
+    #[test]
+    fn parse_and_stringify_round_trip() {
+        let parse = json_fn("json_parse");
+        let stringify = json_fn("json_stringify");
+
+        let parsed = parse(vec![Expression::StringLiteral(
+            "{\"x\":1,\"ok\":true}".to_string(),
+        )])
+        .expect("json_parse should return object");
+        assert!(matches!(parsed, Expression::Object(_)));
+
+        let mut obj = HashMap::new();
+        obj.insert("x".to_string(), Expression::Number(1));
+        obj.insert("ok".to_string(), Expression::Boolean(true));
+        let serialized = stringify(vec![Expression::Object(obj)])
+            .expect("json_stringify should return string literal");
+        assert!(matches!(
+            serialized,
+            Expression::StringLiteral(s) if s.contains("\"x\":1") && s.contains("\"ok\":true")
+        ));
+    }
+
+    #[test]
+    fn parse_invalid_json_returns_none() {
+        let parse = json_fn("json_parse");
+        let result = parse(vec![Expression::StringLiteral("{invalid}".to_string())]);
+        assert!(result.is_none());
+    }
+}

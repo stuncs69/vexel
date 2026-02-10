@@ -169,3 +169,67 @@ fn array_range(args: Vec<Expression>) -> Option<Expression> {
         None
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::array_functions;
+    use crate::parser::ast::Expression;
+
+    fn array_fn(name: &str) -> fn(Vec<Expression>) -> Option<Expression> {
+        array_functions()
+            .into_iter()
+            .find(|(n, _)| *n == name)
+            .map(|(_, f)| f)
+            .expect("missing array function")
+    }
+
+    #[test]
+    fn push_get_set_and_length_work_together() {
+        let push = array_fn("array_push");
+        let get = array_fn("array_get");
+        let set = array_fn("array_set");
+        let length = array_fn("array_length");
+
+        let original = Expression::Array(vec![Expression::Number(1), Expression::Number(2)]);
+        let pushed =
+            push(vec![original, Expression::Number(3)]).expect("array_push should return array");
+        assert!(matches!(
+            length(vec![pushed.clone()]),
+            Some(Expression::Number(3))
+        ));
+        assert!(matches!(
+            get(vec![pushed.clone(), Expression::Number(2)]),
+            Some(Expression::Number(3))
+        ));
+
+        let updated = set(vec![pushed, Expression::Number(1), Expression::Number(9)])
+            .expect("array_set should return array");
+        assert!(matches!(
+            get(vec![updated, Expression::Number(1)]),
+            Some(Expression::Number(9))
+        ));
+    }
+
+    #[test]
+    fn range_slice_pop_and_join_work() {
+        let range = array_fn("array_range");
+        let slice = array_fn("array_slice");
+        let pop = array_fn("array_pop");
+        let join = array_fn("array_join");
+
+        let values = range(vec![Expression::Number(5)]).expect("array_range should return array");
+        let sliced = slice(vec![values, Expression::Number(1), Expression::Number(4)])
+            .expect("array_slice should return array");
+        assert!(matches!(
+            join(vec![
+                sliced.clone(),
+                Expression::StringLiteral(",".to_string())
+            ]),
+            Some(Expression::StringLiteral(s)) if s == "1,2,3"
+        ));
+        assert!(matches!(
+            pop(vec![sliced]),
+            Some(Expression::Array(items)) if matches!(items.as_slice(), [Expression::Number(3)])
+        ));
+    }
+}

@@ -45,7 +45,7 @@ pub(crate) fn repl() {
         if !in_block {
             match try_parse_program(&buffer) {
                 Ok(statements) => {
-                    runtime.execute(statements);
+                    runtime.execute(&statements);
                 }
                 Err(e) => {
                     eprintln!("{}", e);

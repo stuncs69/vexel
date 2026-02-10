@@ -1,5 +1,3 @@
-// src/parser/ast.rs
-
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
@@ -63,7 +61,9 @@ pub(crate) enum Expression {
     Number(i32),
     Boolean(bool),
     StringLiteral(String),
-    StringInterpolation { parts: Vec<InterpolationPart> },
+    StringInterpolation {
+        parts: Vec<InterpolationPart>,
+    },
     Variable(String),
     FunctionCall {
         name: String,

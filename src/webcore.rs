@@ -32,7 +32,7 @@ pub fn run(folder: &str) {
 
         let statements = parse_program(&code);
         let mut runtime = Runtime::new();
-        runtime.execute(statements);
+        runtime.execute(&statements);
 
         let default_path = format!(
             "/{}",
@@ -62,11 +62,7 @@ pub fn run(folder: &str) {
             continue;
         }
 
-        routes.push(Route {
-            path: path_value,
-            method: method_value,
-            runtime,
-        });
+        routes.push(Route::new(path_value, method_value, runtime));
     }
 
     if routes.is_empty() {
@@ -117,16 +113,31 @@ pub fn run(folder: &str) {
 struct Route {
     path: String,
     method: String,
+    path_regex: Option<Regex>,
     runtime: Runtime,
 }
 
 impl Route {
+    fn new(path: String, method: String, runtime: Runtime) -> Self {
+        let path_regex = if path.contains('{') {
+            Some(build_path_regex(&path))
+        } else {
+            None
+        };
+
+        Self {
+            path,
+            method,
+            path_regex,
+            runtime,
+        }
+    }
+
     fn matches(&self, url: &str, method: &str) -> bool {
         if self.method != method {
             return false;
         }
-        if self.path.contains('{') {
-            let re = self.to_regex();
+        if let Some(re) = &self.path_regex {
             re.is_match(url)
         } else {
             self.path == url
@@ -134,19 +145,18 @@ impl Route {
     }
 
     fn extract_arg(&self, url: &str) -> Option<String> {
-        if self.path.contains('{') {
-            let re = self.to_regex();
+        if let Some(re) = &self.path_regex {
             if let Some(cap) = re.captures(url).and_then(|c| c.get(1)) {
                 return Some(cap.as_str().to_string());
             }
         }
         None
     }
+}
 
-    fn to_regex(&self) -> Regex {
-        let mut pattern = regex::escape(&self.path);
-        let placeholder = Regex::new(r"\\\{[^\\]+\\\}").unwrap();
-        pattern = placeholder.replace_all(&pattern, "([^/]+)").into_owned();
-        Regex::new(&format!("^{}$", pattern)).expect("Invalid regex")
-    }
+fn build_path_regex(path: &str) -> Regex {
+    let mut pattern = regex::escape(path);
+    let placeholder = Regex::new(r"\\\{[^\\]+\\\}").expect("Invalid placeholder regex");
+    pattern = placeholder.replace_all(&pattern, "([^/]+)").into_owned();
+    Regex::new(&format!("^{}$", pattern)).expect("Invalid route regex")
 }

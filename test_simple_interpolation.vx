@@ -1,28 +1,20 @@
-# Simple string interpolation tests
 
-# Test 1: Basic variable interpolation
 set name "Alice"
 set age 25
 print "Hello, my name is ${name} and I am ${age} years old."
 
-# Test 2: Mathematical expressions
 set x 10
 set y 5
 print "The sum of ${x} and ${y} is ${math_add(x, y)}"
 
-# Test 3: Boolean and null values
 set is_student true
 set empty_value null
 print "Student status: ${is_student}, Empty: ${empty_value}"
 
-# Test 4: Escaped dollar signs
 print "This is a literal \$sign and this is interpolated: ${name}"
 
-# Test 5: Multiple interpolations
 print "Name: ${name}, Age: ${age}, Sum: ${math_add(x, y)}"
 
-# Test 6: Only interpolation
 print "${name}"
 
-# Test 7: Text with interpolation
 print "Start-${name}-Middle-${age}-End"

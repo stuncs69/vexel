@@ -41,9 +41,7 @@ pub fn string_functions() -> Vec<(&'static str, fn(Vec<Expression>) -> Option<Ex
         ("number_from_string", |args: Vec<Expression>| {
             if args.len() == 1 {
                 match &args[0] {
-                    Expression::StringLiteral(s) => {
-                        Some(Expression::Number(s.parse::<i32>().unwrap()))
-                    }
+                    Expression::StringLiteral(s) => s.parse::<i32>().ok().map(Expression::Number),
                     _ => None,
                 }
             } else {
@@ -64,26 +62,16 @@ pub fn string_functions() -> Vec<(&'static str, fn(Vec<Expression>) -> Option<Ex
                             let start = *start as usize;
                             let length = *length as usize;
                             let chars: Vec<char> = s.chars().collect();
-                            if start <= chars.len() && start + length <= chars.len() {
-                                let substr: String = chars[start..start + length].iter().collect();
-                                Some(Expression::StringLiteral(substr))
-                            } else {
-                                None
-                            }
-                        }
-                        } else {
-                            let start = *start as usize;
-                            let length = *length as usize;
-                            let char_count = s.chars().count();
-                            if start > char_count {
-                                None
-                            } else if let Some(end) = start.checked_add(length) {
-                                if end > char_count {
-                                    None
+                            if start <= chars.len() {
+                                if let Some(end) = start.checked_add(length) {
+                                    if end <= chars.len() {
+                                        let substr: String = chars[start..end].iter().collect();
+                                        Some(Expression::StringLiteral(substr))
+                                    } else {
+                                        None
+                                    }
                                 } else {
-                                    Some(Expression::StringLiteral(
-                                        s.chars().skip(start).take(length).collect(),
-                                    ))
+                                    None
                                 }
                             } else {
                                 None
@@ -183,4 +171,30 @@ pub fn string_functions() -> Vec<(&'static str, fn(Vec<Expression>) -> Option<Ex
             }
         }),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::string_functions;
+    use crate::parser::ast::Expression;
+
+    #[test]
+    fn string_substring_handles_utf8_without_panicking() {
+        let func = string_functions()
+            .into_iter()
+            .find(|(name, _)| *name == "string_substring")
+            .map(|(_, f)| f)
+            .expect("missing string_substring function");
+
+        let result = func(vec![
+            Expression::StringLiteral("é".to_string()),
+            Expression::Number(0),
+            Expression::Number(1),
+        ]);
+
+        match result {
+            Some(Expression::StringLiteral(value)) => assert_eq!(value, "é"),
+            _ => panic!("Expected utf8 substring result"),
+        }
+    }
 }

@@ -86,3 +86,53 @@ pub fn math_functions() -> Vec<(&'static str, fn(Vec<Expression>) -> Option<Expr
         }),
     ]
 }
+
+#[cfg(test)]
+mod tests {
+    use super::math_functions;
+    use crate::parser::ast::Expression;
+
+    fn math_fn(name: &str) -> fn(Vec<Expression>) -> Option<Expression> {
+        math_functions()
+            .into_iter()
+            .find(|(n, _)| *n == name)
+            .map(|(_, f)| f)
+            .expect("missing math function")
+    }
+
+    #[test]
+    fn add_and_multiply_return_expected_values() {
+        let add = math_fn("math_add");
+        let multiply = math_fn("math_multiply");
+
+        assert!(matches!(
+            add(vec![Expression::Number(4), Expression::Number(6)]),
+            Some(Expression::Number(10))
+        ));
+        assert!(matches!(
+            multiply(vec![Expression::Number(3), Expression::Number(7)]),
+            Some(Expression::Number(21))
+        ));
+    }
+
+    #[test]
+    fn divide_by_zero_returns_none() {
+        let divide = math_fn("math_divide");
+        assert!(divide(vec![Expression::Number(8), Expression::Number(0)]).is_none());
+    }
+
+    #[test]
+    fn power_and_abs_return_expected_values() {
+        let power = math_fn("math_power");
+        let abs = math_fn("math_abs");
+
+        assert!(matches!(
+            power(vec![Expression::Number(2), Expression::Number(5)]),
+            Some(Expression::Number(32))
+        ));
+        assert!(matches!(
+            abs(vec![Expression::Number(-9)]),
+            Some(Expression::Number(9))
+        ));
+    }
+}

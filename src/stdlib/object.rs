@@ -119,3 +119,72 @@ fn object_to_string_impl(expr: &Expression) -> String {
         Expression::StringInterpolation { .. } => "\"<string interpolation>\"".to_string(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::object_functions;
+    use crate::parser::ast::Expression;
+
+    fn object_fn(name: &str) -> fn(Vec<Expression>) -> Option<Expression> {
+        object_functions()
+            .into_iter()
+            .find(|(n, _)| *n == name)
+            .map(|(_, f)| f)
+            .expect("missing object function")
+    }
+
+    #[test]
+    fn create_has_property_and_merge_work() {
+        let create = object_fn("object_create");
+        let has_property = object_fn("object_has_property");
+        let merge = object_fn("object_merge");
+
+        let obj_a = create(vec![
+            Expression::StringLiteral("a".to_string()),
+            Expression::Number(1),
+        ])
+        .expect("object_create should return object");
+        let obj_b = create(vec![
+            Expression::StringLiteral("b".to_string()),
+            Expression::Number(2),
+        ])
+        .expect("object_create should return object");
+        let merged = merge(vec![obj_a, obj_b]).expect("object_merge should return object");
+
+        assert!(matches!(
+            has_property(vec![
+                merged.clone(),
+                Expression::StringLiteral("a".to_string())
+            ]),
+            Some(Expression::Boolean(true))
+        ));
+        assert!(matches!(
+            has_property(vec![merged, Expression::StringLiteral("b".to_string())]),
+            Some(Expression::Boolean(true))
+        ));
+    }
+
+    #[test]
+    fn keys_and_values_return_arrays() {
+        let create = object_fn("object_create");
+        let keys = object_fn("object_keys");
+        let values = object_fn("object_values");
+
+        let obj = create(vec![
+            Expression::StringLiteral("a".to_string()),
+            Expression::Number(1),
+            Expression::StringLiteral("b".to_string()),
+            Expression::Number(2),
+        ])
+        .expect("object_create should return object");
+
+        assert!(matches!(
+            keys(vec![obj.clone()]),
+            Some(Expression::Array(items)) if items.len() == 2
+        ));
+        assert!(matches!(
+            values(vec![obj]),
+            Some(Expression::Array(items)) if items.len() == 2
+        ));
+    }
+}

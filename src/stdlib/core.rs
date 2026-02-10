@@ -67,3 +67,23 @@ pub fn core_functions() -> Vec<(&'static str, fn(Vec<Expression>) -> Option<Expr
         }),
     ]
 }
+
+#[cfg(test)]
+mod tests {
+    use super::core_functions;
+    use crate::parser::ast::Expression;
+
+    #[test]
+    fn exec_returns_none_for_missing_command_instead_of_panicking() {
+        let exec = core_functions()
+            .into_iter()
+            .find(|(name, _)| *name == "exec")
+            .map(|(_, f)| f)
+            .expect("missing exec function");
+
+        let result = exec(vec![Expression::StringLiteral(
+            "definitely_not_a_real_command_123".to_string(),
+        )]);
+        assert!(result.is_none());
+    }
+}

@@ -1,5 +1,3 @@
-// src/parser/old
-
 use crate::parser::ast::{Expression, InterpolationPart, Statement};
 use crate::parser::error::ParseError;
 use std::collections::VecDeque;
@@ -8,7 +6,8 @@ use std::panic;
 pub(crate) fn parse_program(code: &str) -> Vec<Statement> {
     let mut lines: VecDeque<&str> = code
         .lines()
-        .map(|line| line.split('#').next().unwrap_or("").trim())
+        .map(strip_inline_comment)
+        .map(str::trim)
         .filter(|line| !line.is_empty())
         .collect();
     parse_block(&mut lines)
@@ -78,7 +77,6 @@ fn parse_set_statement(first_line: &str, lines: &mut VecDeque<&str>) -> Statemen
     let target = parts[1].to_string();
     let mut value_str = parts[2].to_string();
 
-    // If the value is an object, collect multiple lines
     if value_str == "{" {
         let mut lines_to_parse = Vec::new();
         let mut brace_depth = 1;
@@ -86,7 +84,6 @@ fn parse_set_statement(first_line: &str, lines: &mut VecDeque<&str>) -> Statemen
         while let Some(line) = lines.pop_front() {
             let trimmed = line.trim();
 
-            // Track brace depth (ignoring braces in strings)
             let mut in_string = false;
             let mut escaped = false;
             for ch in trimmed.chars() {
@@ -103,12 +100,9 @@ fn parse_set_statement(first_line: &str, lines: &mut VecDeque<&str>) -> Statemen
                 }
             }
 
-            // Collect lines until we balance the braces
             if trimmed == "}" && brace_depth == 0 {
-                // This is the final closing brace
                 break;
             } else if brace_depth == 0 {
-                // Line contains more than just the closing brace
                 lines_to_parse.push(trimmed);
                 break;
             } else {
@@ -116,11 +110,9 @@ fn parse_set_statement(first_line: &str, lines: &mut VecDeque<&str>) -> Statemen
             }
         }
 
-        // Reconstruct the object string
         let mut result = String::from("{");
         for (i, line) in lines_to_parse.iter().enumerate() {
             if i > 0 {
-                // Add appropriate spacing
                 if !result.ends_with("{") && !result.ends_with(" ") {
                     result.push_str(" ");
                 }
@@ -139,7 +131,6 @@ fn parse_set_statement(first_line: &str, lines: &mut VecDeque<&str>) -> Statemen
         let object_path = &target[..dot_pos];
         let property = target[dot_pos + 1..].to_string();
 
-        // Parse the object path - could be a simple variable or a property access chain
         let object_expr = if object_path.contains('.') {
             parse_property_access(object_path)
         } else {
@@ -254,7 +245,6 @@ fn parse_expression(expr: &str) -> Expression {
         return parse_object(expr);
     }
 
-    // Support string concatenation using '+' operator. Convert a+b+c into nested string_concat calls.
     if expr.contains('+') {
         let parts: Vec<&str> = expr.split('+').map(str::trim).collect();
         if parts.len() >= 2 {
@@ -270,20 +260,14 @@ fn parse_expression(expr: &str) -> Expression {
         }
     }
 
-    if let Some(operator) = ["==", "!=", "<=", ">=", "<", ">"]
-        .iter()
-        .find(|&&op| expr.contains(op))
-    {
-        let parts: Vec<&str> = expr.split(operator).map(str::trim).collect();
-        if parts.len() == 2 {
-            let left = parse_expression(parts[0]);
-            let right = parse_expression(parts[1]);
-            return Expression::Comparison {
-                left: Box::new(left),
-                operator: operator.to_string(),
-                right: Box::new(right),
-            };
-        }
+    if let Some((operator_pos, operator)) = find_top_level_comparison_operator(expr) {
+        let left = parse_expression(expr[..operator_pos].trim());
+        let right = parse_expression(expr[operator_pos + operator.len()..].trim());
+        return Expression::Comparison {
+            left: Box::new(left),
+            operator: operator.to_string(),
+            right: Box::new(right),
+        };
     }
 
     if expr.contains('(') && expr.contains(')') {
@@ -404,8 +388,6 @@ fn parse_function_call(expr: &str) -> Expression {
 }
 
 fn parse_test_block(lines: &mut VecDeque<&str>, header: &str) -> Statement {
-    // Expected syntax: test "name" start
-    // Extract name inside quotes
     let name_start = header.find('"').unwrap_or(0);
     let name_end = header[name_start + 1..]
         .find('"')
@@ -417,7 +399,6 @@ fn parse_test_block(lines: &mut VecDeque<&str>, header: &str) -> Statement {
         "Unnamed Test".to_string()
     };
 
-    // Body until matching 'end'
     let body = parse_block(lines);
 
     Statement::Test { name, body }
@@ -429,7 +410,6 @@ fn extract_between<'a>(s: &'a str, start: &str, end: &str) -> &'a str {
         None => return "",
     };
 
-    // Handle nested structures for braces, brackets, and parentheses
     if (start == "{" && end == "}") || (start == "[" && end == "]") || (start == "(" && end == ")")
     {
         let mut depth = 1;
@@ -563,6 +543,65 @@ fn split_top_level_once(s: &str, delimiter: char) -> Vec<&str> {
     vec![s.trim()]
 }
 
+fn strip_inline_comment(line: &str) -> &str {
+    let mut in_string = false;
+    let mut escaped = false;
+
+    for (idx, ch) in line.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+
+        match ch {
+            '\\' if in_string => escaped = true,
+            '"' => in_string = !in_string,
+            '#' if !in_string => return &line[..idx],
+            _ => {}
+        }
+    }
+
+    line
+}
+
+fn find_top_level_comparison_operator(expr: &str) -> Option<(usize, &'static str)> {
+    let operators = ["==", "!=", "<=", ">=", "<", ">"];
+    let mut depth_curly = 0;
+    let mut depth_square = 0;
+    let mut depth_paren = 0;
+    let mut in_string = false;
+    let mut escaped = false;
+
+    for (idx, ch) in expr.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+
+        match ch {
+            '\\' if in_string => escaped = true,
+            '"' => in_string = !in_string,
+            '{' if !in_string => depth_curly += 1,
+            '}' if !in_string => depth_curly -= 1,
+            '[' if !in_string => depth_square += 1,
+            ']' if !in_string => depth_square -= 1,
+            '(' if !in_string => depth_paren += 1,
+            ')' if !in_string => depth_paren -= 1,
+            _ => {
+                if !in_string && depth_curly == 0 && depth_square == 0 && depth_paren == 0 {
+                    for op in operators {
+                        if expr[idx..].starts_with(op) {
+                            return Some((idx, op));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
+
 fn parse_interpolated_string(content: &str) -> Expression {
     let mut parts = Vec::new();
     let mut current_text = String::new();
@@ -634,4 +673,48 @@ fn extract_balanced_braces(chars: &mut std::iter::Peekable<std::str::Chars>) -> 
     }
 
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_program;
+    use crate::parser::ast::{Expression, Statement};
+
+    #[test]
+    fn parse_program_keeps_hash_inside_strings() {
+        let statements = parse_program("set s \"hello # world\"\nprint s\n");
+        assert_eq!(statements.len(), 2);
+
+        match &statements[0] {
+            Statement::Set {
+                var,
+                value: Expression::StringLiteral(value),
+            } => {
+                assert_eq!(var, "s");
+                assert_eq!(value, "hello # world");
+            }
+            _ => panic!("Expected set statement with string literal"),
+        }
+    }
+
+    #[test]
+    fn parse_expression_handles_nested_comparison_in_function_arg() {
+        let statements = parse_program("set x type_of(1 > 0)\n");
+        assert_eq!(statements.len(), 1);
+
+        match &statements[0] {
+            Statement::Set { var, value } => {
+                assert_eq!(var, "x");
+                match value {
+                    Expression::FunctionCall { name, args } => {
+                        assert_eq!(name, "type_of");
+                        assert_eq!(args.len(), 1);
+                        assert!(matches!(args[0], Expression::Comparison { .. }));
+                    }
+                    _ => panic!("Expected function call expression"),
+                }
+            }
+            _ => panic!("Expected set statement"),
+        }
+    }
 }

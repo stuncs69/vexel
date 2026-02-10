@@ -18,12 +18,16 @@ pub fn update_functions_snapshot(map: HashMap<String, (Vec<String>, Vec<Statemen
     *guard = map;
 }
 
-pub fn update_modules_snapshot(map: HashMap<String, HashMap<String, (Vec<String>, Vec<Statement>, bool)>>) {
+pub fn update_modules_snapshot(
+    map: HashMap<String, HashMap<String, (Vec<String>, Vec<Statement>, bool)>>,
+) {
     let mut guard = MODULES_SNAPSHOT.lock().unwrap();
     *guard = map;
 }
 
-pub fn update_module_cache_snapshot(map: HashMap<String, HashMap<String, (Vec<String>, Vec<Statement>, bool)>>) {
+pub fn update_module_cache_snapshot(
+    map: HashMap<String, HashMap<String, (Vec<String>, Vec<Statement>, bool)>>,
+) {
     let mut guard = MODULE_CACHE_SNAPSHOT.lock().unwrap();
     *guard = map;
 }
@@ -42,15 +46,12 @@ fn thread_spawn(args: Vec<Expression>) -> Option<Expression> {
         }
     };
 
-    // Tail args passed to the target function
     let call_args: Vec<Expression> = args.into_iter().skip(1).collect();
 
-    // Snapshot current functions/modules
     let funcs = FUNCTIONS_SNAPSHOT.lock().unwrap().clone();
     let mods = MODULES_SNAPSHOT.lock().unwrap().clone();
     let mod_cache = MODULE_CACHE_SNAPSHOT.lock().unwrap().clone();
 
-    // Generate a simple thread id
     let tid = format!(
         "t{}",
         SystemTime::now()
@@ -61,10 +62,8 @@ fn thread_spawn(args: Vec<Expression>) -> Option<Expression> {
 
     let handle = std::thread::spawn(move || {
         let mut rt = Runtime::new();
-        // Inject snapshots into the new runtime
         rt.set_functions_snapshot(funcs);
         rt.set_modules_snapshot(mods, mod_cache);
-        // Call the function; name may be module-qualified
         rt.call_function(&func_name, call_args)
     });
 
@@ -86,7 +85,6 @@ fn thread_join(args: Vec<Expression>) -> Option<Expression> {
         }
     };
 
-    // Try to take and join the thread if still running
     if let Some(handle) = THREADS.lock().unwrap().remove(&tid) {
         match handle.join() {
             Ok(result) => {
@@ -101,12 +99,10 @@ fn thread_join(args: Vec<Expression>) -> Option<Expression> {
         }
     }
 
-    // Otherwise, return a stored result if already joined
     if let Some(result) = RESULTS.lock().unwrap().remove(&tid) {
         return result;
     }
 
-    // Unknown id
     eprintln!("thread '{}' not found", tid);
     None
 }
@@ -141,8 +137,54 @@ fn thread_status(args: Vec<Expression>) -> Option<Expression> {
 
 pub fn thread_functions() -> Vec<(&'static str, fn(Vec<Expression>) -> Option<Expression>)> {
     vec![
-        ("thread_spawn", thread_spawn as fn(Vec<Expression>) -> Option<Expression>),
-        ("thread_join", thread_join as fn(Vec<Expression>) -> Option<Expression>),
-        ("thread_status", thread_status as fn(Vec<Expression>) -> Option<Expression>),
+        (
+            "thread_spawn",
+            thread_spawn as fn(Vec<Expression>) -> Option<Expression>,
+        ),
+        (
+            "thread_join",
+            thread_join as fn(Vec<Expression>) -> Option<Expression>,
+        ),
+        (
+            "thread_status",
+            thread_status as fn(Vec<Expression>) -> Option<Expression>,
+        ),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::thread_functions;
+    use crate::parser::ast::Expression;
+
+    fn thread_fn(name: &str) -> fn(Vec<Expression>) -> Option<Expression> {
+        thread_functions()
+            .into_iter()
+            .find(|(n, _)| *n == name)
+            .map(|(_, f)| f)
+            .expect("missing thread function")
+    }
+
+    #[test]
+    fn spawn_with_no_args_returns_none() {
+        let spawn = thread_fn("thread_spawn");
+        assert!(spawn(vec![]).is_none());
+    }
+
+    #[test]
+    fn status_for_unknown_thread_is_unknown() {
+        let status = thread_fn("thread_status");
+        assert!(matches!(
+            status(vec![Expression::StringLiteral(
+                "nonexistent_thread".to_string()
+            )]),
+            Some(Expression::StringLiteral(value)) if value == "unknown"
+        ));
+    }
+
+    #[test]
+    fn join_unknown_thread_returns_none() {
+        let join = thread_fn("thread_join");
+        assert!(join(vec![Expression::StringLiteral("missing".to_string())]).is_none());
+    }
 }

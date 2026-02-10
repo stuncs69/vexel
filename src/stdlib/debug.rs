@@ -34,3 +34,20 @@ pub fn debug_functions() -> Vec<(&'static str, fn(Vec<Expression>) -> Option<Exp
         }),
     ]
 }
+
+#[cfg(test)]
+mod tests {
+    use super::debug_functions;
+
+    #[test]
+    fn dump_with_no_arguments_does_not_panic() {
+        let dump = debug_functions()
+            .into_iter()
+            .find(|(name, _)| *name == "dump")
+            .map(|(_, f)| f)
+            .expect("missing dump function");
+
+        let result = dump(vec![]);
+        assert!(result.is_none());
+    }
+}

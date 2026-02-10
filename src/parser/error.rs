@@ -1,5 +1,3 @@
-// src/parser/error.rs
-
 use std::fmt::{Display, Formatter, Result as FmtResult};
 
 #[derive(Debug, Clone)]

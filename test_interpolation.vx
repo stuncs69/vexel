@@ -1,58 +1,45 @@
-// Test script for string interpolation functionality
 
-// Test 1: Basic variable interpolation
 set name "Alice"
 set age 25
 print "Hello, my name is ${name} and I am ${age} years old."
 
-// Test 2: Mathematical expressions
 set x 10
 set y 5
 print "The sum of ${x} and ${y} is ${math_add(x, y)}"
 print "The product is ${math_multiply(x, y)}"
 
-// Test 3: Boolean values
 set is_student true
 print "Student status: ${is_student}"
 
-// Test 4: Null values
 set empty_value null
 print "Empty value: ${empty_value}"
 
-// Test 5: Nested function calls
 set text "world"
 print "Length of '${text}' is ${string_length(text)} characters"
 
-// Test 6: Complex expressions
 set base 2
 set exponent 3
 print "${base} to the power of ${exponent} equals ${math_power(base, exponent)}"
 
-// Test 7: String concatenation within interpolation
 set first_name "John"
 set last_name "Doe"
 print "Full name: ${string_concat(first_name, string_concat(\" \", last_name))}"
 
-// Test 8: Multiple interpolations in one string
 set item "apple"
 set quantity 5
 set price 1.50
 print "I bought ${quantity} ${item}s for ${math_multiply(quantity, price)} each"
 
-// Test 9: Escaped dollar signs
 print "This is a literal \$sign and this is interpolated: ${name}"
 
-// Test 10: Array and object access (if supported)
 set numbers [1, 2, 3, 4, 5]
 print "First number: ${numbers[0]}"
 
-// Test 11: Comparison results
 set a 10
 set b 20
 print "Is ${a} greater than ${b}? ${a > b}"
 print "Is ${a} less than ${b}? ${a < b}"
 
-// Test 12: Function definition and call within interpolation
 function double(n) {
     return math_multiply(n, 2)
 }
@@ -60,12 +47,9 @@ function double(n) {
 set num 7
 print "Double of ${num} is ${double(num)}"
 
-// Test 13: Empty interpolation parts
 print "Start${name}Middle${age}End"
 
-// Test 14: Only interpolation, no text
 print "${string_concat(\"Hello \", name)}"
 
-// Test 15: Complex nested braces
 set obj {"name": "Bob", "age": 30}
 print "Object name: ${obj.name}, age: ${obj.age}"

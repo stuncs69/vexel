@@ -1,4 +1,3 @@
-# Test advanced curve calculation functions
 import math from './math_module.vx'
 
 print "\n=== Cubic x³ - 2x² + 3x - 5 ==="

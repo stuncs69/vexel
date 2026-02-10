@@ -1,4 +1,3 @@
-# Very basic module test
 import math from './math_module.vx'
 
 print "Direct call:"

@@ -1,4 +1,3 @@
-# Math module with exported functions
 
 export function add(a, b)
     return math_add(a, b)
@@ -12,7 +11,6 @@ export function square(x)
     return multiply(x, x)
 end
 
-# This function is not exported - it's private to the module
 function helper(x)
     return math_add(x, 1)
 end
@@ -21,62 +19,44 @@ export function increment(x)
     return helper(x)
 end
 
-# Advanced curve calculation - evaluates quadratic polynomial ax² + bx + c
 export function quadratic_curve(x, a, b, c)
-    # Calculate ax²
     set x_squared math_multiply(x, x)
     set ax_squared math_multiply(a, x_squared)
     
-    # Calculate bx
     set bx math_multiply(b, x)
     
-    # Calculate ax² + bx
     set sum math_add(ax_squared, bx)
     
-    # Calculate final result: ax² + bx + c
     return math_add(sum, c)
 end
 
-# Calculate the vertex x-coordinate of a parabola: -b/(2a)
 export function parabola_vertex_x(a, b)
-    # Calculate 2a
     set two_a math_multiply(2, a)
     
-    # Calculate -b
     set neg_b math_subtract(0, b)
     
-    # Calculate -b/(2a)
     return math_divide(neg_b, two_a)
 end
 
-# Calculate discriminant of quadratic equation: b² - 4ac
 export function discriminant(a, b, c)
-    # Calculate b²
     set b_squared math_multiply(b, b)
     
-    # Calculate 4ac
     set four math_multiply(2, 2)
     set four_a math_multiply(four, a)
     set four_ac math_multiply(four_a, c)
     
-    # Calculate b² - 4ac
     return math_subtract(b_squared, four_ac)
 end
 
-# Bezier curve point calculation (linear interpolation between two points)
 export function bezier_linear(p0, p1, t)
-    # Calculate (1 - t) * p0
     set one_minus_t math_subtract(1, t)
     set term1 math_multiply(one_minus_t, p0)
     
-    # Calculate t * p1
     set term2 math_multiply(t, p1)
     
-    # Return interpolated value
     return math_add(term1, term2)
 end
 
-# Calculate nth power sum: 1^n + 2^n + 3^n + ... + x^n
 export function power_sum(x, n)
     set sum 0
     set i 1
@@ -90,52 +70,37 @@ export function power_sum(x, n)
     return sum
 end
 
-# Advanced polynomial evaluation using Horner's method
-# Evaluates a₀ + a₁x + a₂x² + a₃x³ for given coefficients
 export function cubic_polynomial(x, a0, a1, a2, a3)
-    # Using Horner's method: a₀ + x(a₁ + x(a₂ + xa₃))
     
-    # Start with a₃
     set result a3
     
-    # Multiply by x and add a₂
     set result math_multiply(result, x)
     set result math_add(result, a2)
     
-    # Multiply by x and add a₁
     set result math_multiply(result, x)
     set result math_add(result, a1)
     
-    # Multiply by x and add a₀
     set result math_multiply(result, x)
     set result math_add(result, a0)
     
     return result
 end
 
-# Calculate the area under a parabola from 0 to x using integration
-# Area = (a/3)x³ + (b/2)x² + cx
 export function parabola_area(x, a, b, c)
-    # Calculate (a/3)x³
     set x_cubed math_multiply(x, math_multiply(x, x))
     set a_over_3 math_divide(a, 3)
     set term1 math_multiply(a_over_3, x_cubed)
     
-    # Calculate (b/2)x²
     set x_squared math_multiply(x, x)
     set b_over_2 math_divide(b, 2)
     set term2 math_multiply(b_over_2, x_squared)
     
-    # Calculate cx
     set term3 math_multiply(c, x)
     
-    # Sum all terms
     set sum math_add(term1, term2)
     return math_add(sum, term3)
 end
 
-# Calculate distance between two points using approximation
-# Distance ≈ |x2-x1| + |y2-y1| (Manhattan distance)
 export function manhattan_distance(x1, y1, x2, y2)
     set dx math_subtract(x2, x1)
     set dy math_subtract(y2, y1)

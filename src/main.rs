@@ -1,6 +1,7 @@
 mod parser;
 mod runtime;
 mod stdlib;
+mod webcore;
 use parser::parser::try_parse_program;
 use runtime::repl::repl;
 use runtime::runtime::Runtime;
@@ -18,6 +19,7 @@ fn main() {
 
     if args[1] == "webcore" {
         let folder = if args.len() >= 3 { &args[2] } else { "./" };
+        webcore::run(folder);
         return;
     }
 
@@ -26,7 +28,6 @@ fn main() {
     if !file_path.ends_with(".vx") {
         eprintln!("File must have '.vx' extension");
         std::process::exit(1);
-        // std::process::exit(1);
     }
 
     let code = match fs::read_to_string(file_path) {
@@ -40,7 +41,7 @@ fn main() {
     match try_parse_program(&code) {
         Ok(statements) => {
             let mut runtime = Runtime::new();
-            runtime.execute(statements);
+            runtime.execute(&statements);
         }
         Err(e) => {
             eprintln!("{}", e);
