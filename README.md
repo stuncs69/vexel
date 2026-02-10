@@ -1,4 +1,4 @@
-# Vexel
+# 🐿️ Vexel
 
 Vexel is a high-performance, JIT-compiled scripting language designed for efficiency and ease of use. It features a simple and intuitive syntax while leveraging just-in-time (JIT) compilation for optimal execution speed. 🚀
 

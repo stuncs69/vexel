@@ -1,7 +1,9 @@
 // src/parser/old
 
-use crate::parser::ast::{Expression, Statement};
+use crate::parser::ast::{Expression, InterpolationPart, Statement};
+use crate::parser::error::ParseError;
 use std::collections::VecDeque;
+use std::panic;
 
 pub(crate) fn parse_program(code: &str) -> Vec<Statement> {
     let mut lines: VecDeque<&str> = code
@@ -10,6 +12,23 @@ pub(crate) fn parse_program(code: &str) -> Vec<Statement> {
         .filter(|line| !line.is_empty())
         .collect();
     parse_block(&mut lines)
+}
+
+pub(crate) fn try_parse_program(code: &str) -> Result<Vec<Statement>, ParseError> {
+    let result = panic::catch_unwind(|| parse_program(code));
+    match result {
+        Ok(stmts) => Ok(stmts),
+        Err(payload) => {
+            let message = if let Some(s) = payload.downcast_ref::<&'static str>() {
+                s.to_string()
+            } else if let Some(s) = payload.downcast_ref::<String>() {
+                s.clone()
+            } else {
+                "Parse error".to_string()
+            };
+            Err(ParseError { message })
+        }
+    }
 }
 
 fn parse_block(lines: &mut VecDeque<&str>) -> Vec<Statement> {
@@ -219,7 +238,12 @@ fn parse_expression(expr: &str) -> Expression {
     }
 
     if expr.starts_with('"') && expr.ends_with('"') {
-        return Expression::StringLiteral(expr[1..expr.len() - 1].to_string());
+        let content = &expr[1..expr.len() - 1];
+        if content.contains("${") {
+            return parse_interpolated_string(content);
+        } else {
+            return Expression::StringLiteral(content.to_string());
+        }
     }
 
     if expr.starts_with('[') && expr.ends_with(']') {
@@ -228,6 +252,22 @@ fn parse_expression(expr: &str) -> Expression {
 
     if expr.starts_with('{') && expr.ends_with('}') {
         return parse_object(expr);
+    }
+
+    // Support string concatenation using '+' operator. Convert a+b+c into nested string_concat calls.
+    if expr.contains('+') {
+        let parts: Vec<&str> = expr.split('+').map(str::trim).collect();
+        if parts.len() >= 2 {
+            let mut current = parse_expression(parts[0]);
+            for part in &parts[1..] {
+                let right = parse_expression(part);
+                current = Expression::FunctionCall {
+                    name: "string_concat".to_string(),
+                    args: vec![current, right],
+                };
+            }
+            return current;
+        }
     }
 
     if let Some(operator) = ["==", "!=", "<=", ">=", "<", ">"]
@@ -259,7 +299,7 @@ fn parse_expression(expr: &str) -> Expression {
 
 fn parse_object(expr: &str) -> Expression {
     let content = extract_between(expr, "{", "}");
-    let mut properties = Vec::new();
+    let mut properties = std::collections::HashMap::new();
 
     let parts = split_top_level(content, ',');
 
@@ -279,7 +319,7 @@ fn parse_object(expr: &str) -> Expression {
         let key = key_value[0].trim().to_string();
         let value_str = key_value[1].trim();
         let value = parse_expression(value_str);
-        properties.push((key, value));
+        properties.insert(key, value);
     }
 
     Expression::Object(properties)
@@ -521,4 +561,77 @@ fn split_top_level_once(s: &str, delimiter: char) -> Vec<&str> {
         }
     }
     vec![s.trim()]
+}
+
+fn parse_interpolated_string(content: &str) -> Expression {
+    let mut parts = Vec::new();
+    let mut current_text = String::new();
+    let mut chars = content.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch == '$' && chars.peek() == Some(&'{') {
+            if !current_text.is_empty() {
+                parts.push(InterpolationPart::Text(current_text.clone()));
+                current_text.clear();
+            }
+
+            chars.next();
+            let expr_str = extract_balanced_braces(&mut chars);
+            let expr = parse_expression(&expr_str);
+            parts.push(InterpolationPart::Expression(expr));
+        } else if ch == '\\' && chars.peek() == Some(&'$') {
+            chars.next();
+            current_text.push('$');
+        } else {
+            current_text.push(ch);
+        }
+    }
+
+    if !current_text.is_empty() {
+        parts.push(InterpolationPart::Text(current_text));
+    }
+
+    Expression::StringInterpolation { parts }
+}
+
+fn extract_balanced_braces(chars: &mut std::iter::Peekable<std::str::Chars>) -> String {
+    let mut result = String::new();
+    let mut depth = 1;
+    let mut in_string = false;
+    let mut escape_next = false;
+
+    while let Some(ch) = chars.next() {
+        if escape_next {
+            result.push(ch);
+            escape_next = false;
+            continue;
+        }
+
+        match ch {
+            '\\' if in_string => {
+                result.push(ch);
+                escape_next = true;
+            }
+            '"' => {
+                result.push(ch);
+                in_string = !in_string;
+            }
+            '{' if !in_string => {
+                result.push(ch);
+                depth += 1;
+            }
+            '}' if !in_string => {
+                depth -= 1;
+                if depth == 0 {
+                    break;
+                }
+                result.push(ch);
+            }
+            _ => {
+                result.push(ch);
+            }
+        }
+    }
+
+    result
 }

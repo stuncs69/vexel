@@ -1,4 +1,4 @@
-use crate::parser::parser::parse_program;
+use crate::parser::parser::try_parse_program;
 use crate::Runtime;
 use std::io::{self, Write};
 
@@ -43,8 +43,14 @@ pub(crate) fn repl() {
         }
 
         if !in_block {
-            let statements = parse_program(&buffer);
-            runtime.execute(statements);
+            match try_parse_program(&buffer) {
+                Ok(statements) => {
+                    runtime.execute(statements);
+                }
+                Err(e) => {
+                    eprintln!("{}", e);
+                }
+            }
             buffer.clear();
         }
     }

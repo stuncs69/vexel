@@ -51,7 +51,7 @@ pub fn object_functions() -> Vec<(&'static str, fn(Vec<Expression>) -> Option<Ex
                 if let (Expression::Object(properties), Expression::StringLiteral(key)) =
                     (&args[0], &args[1])
                 {
-                    let has_key = properties.iter().any(|(k, _)| k == key);
+                    let has_key = properties.contains_key(key);
                     Some(Expression::Boolean(has_key))
                 } else {
                     None
@@ -66,22 +66,7 @@ pub fn object_functions() -> Vec<(&'static str, fn(Vec<Expression>) -> Option<Ex
                     (&args[0], &args[1])
                 {
                     let mut result = props1.clone();
-
-                    for (key, value) in props2 {
-                        let mut found = false;
-                        for (i, (existing_key, _)) in result.iter().enumerate() {
-                            if existing_key == key {
-                                result[i] = (key.clone(), value.clone());
-                                found = true;
-                                break;
-                            }
-                        }
-
-                        if !found {
-                            result.push((key.clone(), value.clone()));
-                        }
-                    }
-
+                    result.extend(props2.clone());
                     Some(Expression::Object(result))
                 } else {
                     None
@@ -92,11 +77,11 @@ pub fn object_functions() -> Vec<(&'static str, fn(Vec<Expression>) -> Option<Ex
         }),
         ("object_create", |args: Vec<Expression>| {
             if args.len() % 2 == 0 {
-                let mut properties = Vec::new();
+                let mut properties = std::collections::HashMap::new();
 
                 for i in (0..args.len()).step_by(2) {
                     if let Expression::StringLiteral(key) = &args[i] {
-                        properties.push((key.clone(), args[i + 1].clone()));
+                        properties.insert(key.clone(), args[i + 1].clone());
                     } else {
                         return None;
                     }
@@ -131,5 +116,6 @@ fn object_to_string_impl(expr: &Expression) -> String {
         Expression::FunctionCall { .. } => "\"<function call>\"".to_string(),
         Expression::Comparison { .. } => "\"<comparison>\"".to_string(),
         Expression::PropertyAccess { .. } => "\"<property access>\"".to_string(),
+        Expression::StringInterpolation { .. } => "\"<string interpolation>\"".to_string(),
     }
 }

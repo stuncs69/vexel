@@ -1,5 +1,7 @@
 // src/parser/ast.rs
 
+use std::collections::HashMap;
+
 #[derive(Debug, Clone)]
 pub(crate) enum Statement {
     Set {
@@ -51,10 +53,17 @@ pub(crate) enum Statement {
 }
 
 #[derive(Debug, Clone)]
+pub enum InterpolationPart {
+    Text(String),
+    Expression(Expression),
+}
+
+#[derive(Debug, Clone)]
 pub(crate) enum Expression {
     Number(i32),
     Boolean(bool),
     StringLiteral(String),
+    StringInterpolation { parts: Vec<InterpolationPart> },
     Variable(String),
     FunctionCall {
         name: String,
@@ -67,7 +76,7 @@ pub(crate) enum Expression {
     },
     Null,
     Array(Vec<Expression>),
-    Object(Vec<(String, Expression)>),
+    Object(HashMap<String, Expression>),
     PropertyAccess {
         object: Box<Expression>,
         property: String,

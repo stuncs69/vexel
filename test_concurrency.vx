@@ -1,0 +1,14 @@
+function square(n) {
+  return math_multiply(n, n)
+}
+
+set t1 thread_spawn("square", 10)
+set t2 thread_spawn("square", 20)
+
+set s1 thread_status(t1)
+set s2 thread_status(t2)
+print "t1 status: #{s1}, t2 status: #{s2}"
+
+set r1 thread_join(t1)
+set r2 thread_join(t2)
+print "Results: r1=#{r1}, r2=#{r2}"
