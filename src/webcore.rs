@@ -1,8 +1,9 @@
 use crate::parser::ast::Expression;
-use crate::parser::parser::parse_program;
+use crate::parser::parser::try_parse_program;
 use crate::runtime::runtime::Runtime;
 use regex::Regex;
 use std::fs;
+use std::path::Path;
 use tiny_http::{Response, Server};
 
 pub fn run(folder: &str) {
@@ -30,9 +31,23 @@ pub fn run(folder: &str) {
             }
         };
 
-        let statements = parse_program(&code);
-        let mut runtime = Runtime::new();
-        runtime.execute(&statements);
+        let statements = match try_parse_program(&code) {
+            Ok(stmts) => stmts,
+            Err(e) => {
+                eprintln!("[webcore] Parse error in '{}': {}", path.display(), e);
+                continue;
+            }
+        };
+
+        let base_dir = path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf();
+        let mut runtime = Runtime::new_with_base_dir(base_dir);
+        if let Err(e) = runtime.execute(&statements) {
+            eprintln!("[webcore] Runtime error in '{}': {}", path.display(), e);
+            continue;
+        }
 
         let default_path = format!(
             "/{}",
@@ -97,6 +112,8 @@ pub fn run(folder: &str) {
             let body = route
                 .runtime
                 .call_function("request", args)
+                .ok()
+                .flatten()
                 .and_then(|e| match e {
                     Expression::StringLiteral(s) => Some(s),
                     _ => None,

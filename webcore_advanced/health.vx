@@ -1,0 +1,16 @@
+set path "/health"
+set method "GET"
+set hits 0
+
+import common from "./lib/common.vx"
+
+function request() start
+    set hits math_add(hits, 1)
+    set payload {
+        ok: true,
+        service: "webcore-advanced",
+        mode: common.mode_name(),
+        hits: hits
+    }
+    return json_stringify(payload)
+end

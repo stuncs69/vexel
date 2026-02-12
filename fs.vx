@@ -1,5 +1,0 @@
-set x list_dir(".")
-
-for i in x start
-    print i
-end

@@ -37,7 +37,7 @@ end
         "script failed: {}",
         stderr_text(&output)
     );
-    assert_stdout_lines(&output, &["10", "no", "0", "1", "2"]);
+    assert_stdout_lines(&output, &["10", "yes", "0", "1", "2"]);
 }
 
 #[test]
@@ -137,6 +137,36 @@ print m.inc(5)
 }
 
 #[test]
+fn resolves_imports_relative_to_importing_script() {
+    let workspace = create_workspace("import_relative");
+    write_workspace_file(
+        &workspace,
+        "app/lib/math.vx",
+        r#"
+export function inc(x) start
+    return math_add(x, 1)
+end
+"#,
+    );
+    write_workspace_file(
+        &workspace,
+        "app/main.vx",
+        r#"
+import m from "./lib/math.vx"
+print m.inc(9)
+"#,
+    );
+
+    let output = run_script(&workspace, "app/main.vx");
+    assert!(
+        output.status.success(),
+        "script failed: {}",
+        stderr_text(&output)
+    );
+    assert_stdout_lines(&output, &["10"]);
+}
+
+#[test]
 fn executes_json_round_trip() {
     let workspace = create_workspace("json_roundtrip");
     write_workspace_file(
@@ -197,20 +227,18 @@ print file_exists("b.txt")
 }
 
 #[test]
-fn executes_thread_spawn_and_join() {
+fn executes_thread_message_passing() {
     let workspace = create_workspace("threading");
     write_workspace_file(
         &workspace,
         "main.vx",
         r#"
-function add(a, b) start
-    return math_add(a, b)
-end
-set tid thread_spawn("add", 2, 3)
-set r1 thread_join(tid)
-print r1
-set r2 thread_join(tid)
-print r2
+set ch thread_channel()
+set _ thread_send(ch, 5)
+print thread_recv(ch)
+set _ thread_send(ch, "done")
+print thread_recv(ch)
+set _ thread_close(ch)
 "#,
     );
 
@@ -220,5 +248,5 @@ print r2
         "script failed: {}",
         stderr_text(&output)
     );
-    assert_stdout_lines(&output, &["5", "5"]);
+    assert_stdout_lines(&output, &["5", "done"]);
 }

@@ -1,0 +1,36 @@
+set path "/aggregate/{n}"
+set method "GET"
+
+import common from "./lib/common.vx"
+
+function request(n) start
+    set count common.clamp(number_from_string(n), 1, 20)
+
+    set i 0
+    set sum 0
+    set ch thread_channel()
+
+    while i < count start
+        set sq math_multiply(i, i)
+        set sum math_add(sum, sq)
+        set _ thread_send(ch, sq)
+        set i math_add(i, 1)
+    end
+
+    set received 0
+    set squares []
+    while received < count start
+        set v thread_recv(ch)
+        set squares array_push(squares, v)
+        set received math_add(received, 1)
+    end
+    set _ thread_close(ch)
+
+    set _ create_dir("webcore_advanced_runtime")
+    set out_file "webcore_advanced_runtime/aggregate.json"
+    set _ write_file(out_file, json_stringify({count: count, sum: sum, squares: squares}))
+
+    set roundtrip json_parse(read_file(out_file))
+    set last_index math_subtract(count, 1)
+    return json_stringify({count: roundtrip.count, sum: roundtrip.sum, last_square: array_get(roundtrip.squares, last_index)})
+end

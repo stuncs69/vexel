@@ -1,12 +1,14 @@
 # 🐿️ Vexel
 
-Vexel is a high-performance, JIT-compiled scripting language designed for efficiency and ease of use. It features a simple and intuitive syntax while leveraging just-in-time (JIT) compilation for optimal execution speed. 🚀
+Vexel is an interpreted scripting language designed for simple, readable automation scripts. It focuses on straightforward syntax, built-in standard library helpers, and deterministic runtime behavior.
 
 ## Features
 
-- **JIT Compilation**: Execute code with high efficiency using just-in-time compilation.
 - **Simple Syntax**: Clean and easy-to-read syntax for quick development.
 - **Dynamic Typing**: No need to explicitly declare variable types.
+- **Fail-fast Runtime**: Parsing/runtime errors stop execution with clear stderr output.
+- **Script-relative Imports**: `import` paths are resolved relative to the importing `.vx` file.
+- **Message-passing Threads**: Thread primitives use channels (`thread_channel`, `thread_send`, `thread_recv`, `thread_close`).
 
 ## Example Code
 
@@ -53,12 +55,22 @@ After building, you can execute Vexel scripts using:
 target/release/vexel script.vx
 ```
 
+## Documentation
+
+- Full language reference: [LANGUAGE.md](LANGUAGE.md)
+
+## Language Notes
+
+- Blocks use explicit `start` / `end` delimiters.
+- Runtime errors are fail-fast and return a non-zero exit code in CLI mode.
+- Relative imports are resolved from the importing file's directory.
+
 ## Roadmap
 
 - [x] Add more built-in functions
 - [x] Implement loops (`for`, `while`)
-- [ ] Improve error handling
-- [ ] Add importing files support
+- [x] Improve error handling
+- [x] Add importing files support
 - [ ] Add package management support
 - [x] Array support
 - [x] Add object support

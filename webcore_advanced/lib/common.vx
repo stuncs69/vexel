@@ -1,0 +1,26 @@
+export function clamp(value, min_value, max_value) start
+    if value < min_value start
+        return min_value
+    end
+    if value > max_value start
+        return max_value
+    end
+    return value
+end
+
+export function tier_from_score(score) start
+    if score >= 90 start
+        return "platinum"
+    end
+    if score >= 75 start
+        return "gold"
+    end
+    if score >= 60 start
+        return "silver"
+    end
+    return "bronze"
+end
+
+export function mode_name() start
+    return "advanced-webcore"
+end

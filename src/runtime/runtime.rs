@@ -1,10 +1,12 @@
 use crate::parser::ast::{Expression, InterpolationPart, Statement};
 use crate::parser::parser::try_parse_program;
 use crate::stdlib::get_all_native_functions;
-use crate::stdlib::thread;
 use rustc_hash::FxHashMap as HashMap;
 use std::cell::RefCell;
+use std::error::Error;
+use std::fmt;
 use std::fs;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 type FunctionSignature = (Vec<String>, Vec<Statement>, bool);
@@ -15,22 +17,50 @@ type NativeFunctionTable = Rc<HashMap<String, NativeFunction>>;
 type ModuleTable = HashMap<String, FunctionTable>;
 type SharedModuleTable = Rc<RefCell<ModuleTable>>;
 
+#[derive(Debug, Clone)]
+pub struct RuntimeError {
+    message: String,
+}
+
+impl RuntimeError {
+    pub fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
+}
+
+impl fmt::Display for RuntimeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
+
+impl Error for RuntimeError {}
+
 pub struct Runtime {
     variables: HashMap<String, Expression>,
     functions: SharedFunctionTable,
     native_functions: NativeFunctionTable,
     modules: SharedModuleTable,
     module_cache_by_path: SharedModuleTable,
+    base_dir: PathBuf,
 }
 
 impl Runtime {
     pub(crate) fn new() -> Self {
+        let base_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        Self::new_with_base_dir(base_dir)
+    }
+
+    pub(crate) fn new_with_base_dir(base_dir: PathBuf) -> Self {
         let mut runtime = Runtime {
             variables: HashMap::default(),
             functions: Rc::new(RefCell::new(HashMap::default())),
             native_functions: Rc::new(HashMap::default()),
             modules: Rc::new(RefCell::new(HashMap::default())),
             module_cache_by_path: Rc::new(RefCell::new(HashMap::default())),
+            base_dir,
         };
 
         runtime.register_native_functions();
@@ -45,7 +75,7 @@ impl Runtime {
         self.native_functions = Rc::new(map);
     }
 
-    pub(crate) fn execute(&mut self, statements: &[Statement]) -> Option<Expression> {
+    pub(crate) fn execute(&mut self, statements: &[Statement]) -> Result<Option<Expression>, RuntimeError> {
         for statement in statements {
             match statement {
                 Statement::PropertySet {
@@ -53,9 +83,7 @@ impl Runtime {
                     property,
                     value,
                 } => {
-                    let evaluated_value = self
-                        .evaluate_expression(value.clone())
-                        .unwrap_or(Expression::Null);
+                    let evaluated_value = self.evaluate_expression(value.clone())?;
 
                     fn update_property_in_expr(
                         expr: &mut Expression,
@@ -97,7 +125,11 @@ impl Runtime {
                                 path.push(property.clone());
                                 current = object.as_ref();
                             }
-                            _ => return None,
+                            _ => {
+                                return Err(RuntimeError::new(
+                                    "Property assignment requires a variable/object path",
+                                ));
+                            }
                         }
                     };
 
@@ -105,7 +137,9 @@ impl Runtime {
                     path.push(property.clone());
 
                     if let Some(mut root_value) = self.variables.remove(&root_var) {
-                        update_property_in_expr(&mut root_value, &path, evaluated_value);
+                        if !update_property_in_expr(&mut root_value, &path, evaluated_value) {
+                            return Err(RuntimeError::new("Failed to set nested property"));
+                        }
                         self.variables.insert(root_var, root_value);
                     } else {
                         let mut new_value = Expression::Object(std::collections::HashMap::new());
@@ -113,38 +147,41 @@ impl Runtime {
                         self.variables.insert(root_var, new_value);
                     }
                 }
-
                 Statement::ForLoop {
                     variable,
                     iterable,
                     body,
                 } => {
-                    if let Some(Expression::Array(elements)) =
-                        self.evaluate_expression(iterable.clone())
-                    {
-                        for element in elements {
-                            self.variables.insert(variable.clone(), element);
-                            if let Some(return_value) = self.execute(body) {
-                                return Some(return_value);
+                    let iterable_value = self.evaluate_expression(iterable.clone())?;
+                    let Expression::Array(elements) = iterable_value else {
+                        return Err(RuntimeError::new("for loop iterable must evaluate to an array"));
+                    };
+
+                    for element in elements {
+                        self.variables.insert(variable.clone(), element);
+                        if let Some(return_value) = self.execute(body)? {
+                            return Ok(Some(return_value));
+                        }
+                    }
+                }
+                Statement::WhileLoop { condition, body } => loop {
+                    let cond_value = self.evaluate_expression(condition.clone())?;
+                    match cond_value {
+                        Expression::Boolean(true) => {
+                            if let Some(return_value) = self.execute(body)? {
+                                return Ok(Some(return_value));
                             }
                         }
-                    }
-                }
-                Statement::WhileLoop { condition, body } => {
-                    while let Some(Expression::Boolean(true))
-                    | Some(Expression::Variable(_))
-                    | Some(Expression::Comparison { .. }) =
-                        self.evaluate_expression(condition.clone())
-                    {
-                        if let Some(return_value) = self.execute(body) {
-                            return Some(return_value);
+                        Expression::Boolean(false) => break,
+                        _ => {
+                            return Err(RuntimeError::new(
+                                "while condition must evaluate to a boolean",
+                            ));
                         }
                     }
-                }
+                },
                 Statement::Set { var, value } => {
-                    let evaluated_value = self
-                        .evaluate_expression(value.clone())
-                        .unwrap_or(Expression::Null);
+                    let evaluated_value = self.evaluate_expression(value.clone())?;
                     self.variables.insert(var.clone(), evaluated_value);
                 }
                 Statement::Function {
@@ -156,31 +193,34 @@ impl Runtime {
                     self.functions
                         .borrow_mut()
                         .insert(name.clone(), (params.clone(), body.clone(), *exported));
-                    thread::update_functions_snapshot(self.functions.borrow().clone());
                 }
                 Statement::FunctionCall { name, args } => {
-                    if let Some(value) = self.evaluate_expression(Expression::FunctionCall {
+                    let value = self.evaluate_expression(Expression::FunctionCall {
                         name: name.clone(),
                         args: args.clone(),
-                    }) {
-                        self.print_expression(&value);
-                    }
+                    })?;
+                    self.print_expression(&value)?;
                 }
                 Statement::Print { expr } => {
-                    if let Some(value) = self.evaluate_expression(expr.clone()) {
-                        self.print_expression(&value);
-                    }
+                    let value = self.evaluate_expression(expr.clone())?;
+                    self.print_expression(&value)?;
                 }
                 Statement::Return { expr } => {
-                    return self.evaluate_expression(expr.clone());
+                    return Ok(Some(self.evaluate_expression(expr.clone())?));
                 }
                 Statement::If { condition, body } => {
-                    if let Expression::Boolean(true) = self
-                        .evaluate_expression(condition.clone())
-                        .unwrap_or(Expression::Boolean(false))
-                    {
-                        if let Some(return_value) = self.execute(body) {
-                            return Some(return_value);
+                    let cond_value = self.evaluate_expression(condition.clone())?;
+                    match cond_value {
+                        Expression::Boolean(true) => {
+                            if let Some(return_value) = self.execute(body)? {
+                                return Ok(Some(return_value));
+                            }
+                        }
+                        Expression::Boolean(false) => {}
+                        _ => {
+                            return Err(RuntimeError::new(
+                                "if condition must evaluate to a boolean",
+                            ));
                         }
                     }
                 }
@@ -188,103 +228,106 @@ impl Runtime {
                     module_name,
                     file_path,
                 } => {
-                    let resolved_path = if file_path.starts_with("./") {
-                        file_path.strip_prefix("./").unwrap().to_string()
-                    } else {
-                        file_path.clone()
-                    };
+                    let resolved_path = self.resolve_import_path(file_path)?;
+                    let cache_key = resolved_path.to_string_lossy().to_string();
 
-                    if let Some(cached) = self
-                        .module_cache_by_path
-                        .borrow()
-                        .get(&resolved_path)
-                        .cloned()
-                    {
-                        self.modules
-                            .borrow_mut()
-                            .insert(module_name.clone(), cached);
+                    if let Some(cached) = self.module_cache_by_path.borrow().get(&cache_key).cloned() {
+                        self.modules.borrow_mut().insert(module_name.clone(), cached);
                         continue;
                     }
 
-                    match fs::read_to_string(&resolved_path) {
-                        Ok(content) => {
-                            let module_statements = match try_parse_program(&content) {
-                                Ok(stmts) => stmts,
-                                Err(e) => {
-                                    eprintln!("{}", e);
-                                    Vec::new()
-                                }
-                            };
+                    let content = fs::read_to_string(&resolved_path).map_err(|e| {
+                        RuntimeError::new(format!(
+                            "Error loading module from '{}': {}",
+                            resolved_path.display(),
+                            e
+                        ))
+                    })?;
 
-                            let mut module_runtime = Runtime::new();
-                            module_runtime.execute(&module_statements);
+                    let module_statements = try_parse_program(&content)
+                        .map_err(|e| RuntimeError::new(format!("{}", e)))?;
 
-                            let funcs_clone = module_runtime.functions.borrow().clone();
-                            self.modules
-                                .borrow_mut()
-                                .insert(module_name.clone(), funcs_clone.clone());
-                            self.module_cache_by_path
-                                .borrow_mut()
-                                .insert(resolved_path, funcs_clone);
-                            thread::update_modules_snapshot(self.modules.borrow().clone());
-                            thread::update_module_cache_snapshot(
-                                self.module_cache_by_path.borrow().clone(),
-                            );
-                        }
-                        Err(e) => {
-                            eprintln!("Error loading module from '{}': {}", file_path, e);
-                        }
-                    }
+                    let module_base_dir = resolved_path
+                        .parent()
+                        .map(Path::to_path_buf)
+                        .unwrap_or_else(|| self.base_dir.clone());
+
+                    let mut module_runtime = Runtime::new_with_base_dir(module_base_dir);
+                    module_runtime.execute(&module_statements)?;
+
+                    let funcs_clone = module_runtime.functions.borrow().clone();
+                    self.modules
+                        .borrow_mut()
+                        .insert(module_name.clone(), funcs_clone.clone());
+                    self.module_cache_by_path
+                        .borrow_mut()
+                        .insert(cache_key, funcs_clone);
                 }
                 Statement::Test { name, body } => {
                     println!("Running test: {}", name);
                     let mut nested_runtime =
                         self.create_nested_runtime(HashMap::default(), self.functions.clone());
-                    let _ = nested_runtime.execute(body);
+                    let _ = nested_runtime.execute(body)?;
                     println!("Test '{}' finished", name);
                 }
             }
         }
-        None
+        Ok(None)
     }
 
-    fn render_interpolation(&self, parts: &[InterpolationPart]) -> String {
+    fn resolve_import_path(&self, file_path: &str) -> Result<PathBuf, RuntimeError> {
+        let candidate = Path::new(file_path);
+        let resolved = if candidate.is_absolute() {
+            candidate.to_path_buf()
+        } else {
+            self.base_dir.join(candidate)
+        };
+
+        Ok(fs::canonicalize(&resolved).unwrap_or(resolved))
+    }
+
+    fn render_interpolation(&self, parts: &[InterpolationPart]) -> Result<String, RuntimeError> {
         let mut rendered = String::new();
 
         for part in parts {
             match part {
                 InterpolationPart::Text(text) => rendered.push_str(text),
                 InterpolationPart::Expression(expr) => {
-                    if let Some(evaluated) = self.evaluate_expression(expr.clone()) {
-                        match evaluated {
-                            Expression::StringLiteral(s) => rendered.push_str(&s),
-                            Expression::Number(n) => rendered.push_str(&n.to_string()),
-                            Expression::Boolean(b) => rendered.push_str(&b.to_string()),
-                            Expression::Null => rendered.push_str("null"),
-                            _ => rendered.push_str(&self.expression_to_string(&evaluated)),
-                        }
+                    let evaluated = self.evaluate_expression(expr.clone())?;
+                    match evaluated {
+                        Expression::StringLiteral(s) => rendered.push_str(&s),
+                        Expression::Number(n) => rendered.push_str(&n.to_string()),
+                        Expression::Boolean(b) => rendered.push_str(&b.to_string()),
+                        Expression::Null => rendered.push_str("null"),
+                        _ => rendered.push_str(&self.expression_to_string(&evaluated)?),
                     }
                 }
             }
         }
 
-        rendered
+        Ok(rendered)
     }
 
     fn bind_arguments(
         &self,
         params: &[String],
         args: &[Expression],
-    ) -> Option<HashMap<String, Expression>> {
+        function_name: &str,
+    ) -> Result<HashMap<String, Expression>, RuntimeError> {
         if params.len() != args.len() {
-            return None;
+            return Err(RuntimeError::new(format!(
+                "Function '{}' expected {} arguments but received {}",
+                function_name,
+                params.len(),
+                args.len()
+            )));
         }
 
         let mut locals = HashMap::default();
         for (param, arg) in params.iter().zip(args.iter()) {
             locals.insert(param.clone(), arg.clone());
         }
-        Some(locals)
+        Ok(locals)
     }
 
     fn create_nested_runtime(
@@ -298,127 +341,133 @@ impl Runtime {
             native_functions: self.native_functions.clone(),
             modules: self.modules.clone(),
             module_cache_by_path: self.module_cache_by_path.clone(),
+            base_dir: self.base_dir.clone(),
         }
     }
 
-    fn print_expression(&self, expr: &Expression) {
+    fn print_expression(&self, expr: &Expression) -> Result<(), RuntimeError> {
         match expr {
             Expression::Number(n) => println!("{}", n),
             Expression::Boolean(b) => println!("{}", b),
             Expression::StringLiteral(s) => println!("{}", s),
             Expression::StringInterpolation { parts } => {
-                println!("{}", self.render_interpolation(parts))
+                println!("{}", self.render_interpolation(parts)?)
             }
             Expression::Null => println!("null"),
             Expression::Array(arr) => {
-                let elements: Vec<String> =
-                    arr.iter().map(|e| self.expression_to_string(e)).collect();
+                let elements: Vec<String> = arr
+                    .iter()
+                    .map(|e| self.expression_to_string(e))
+                    .collect::<Result<Vec<_>, _>>()?;
                 println!("[{}]", elements.join(", "));
             }
             Expression::Object(properties) => {
                 let elements: Vec<String> = properties
                     .iter()
-                    .map(|(key, value)| format!("{}: {}", key, self.expression_to_string(value)))
-                    .collect();
+                    .map(|(key, value)| {
+                        self.expression_to_string(value)
+                            .map(|rendered| format!("{}: {}", key, rendered))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
                 println!("{{{}}}", elements.join(", "));
             }
             Expression::Variable(name) => {
-                if let Some(val) = self.variables.get(name) {
-                    self.print_expression(val);
-                } else {
-                    println!("undefined");
-                }
+                let val = self
+                    .variables
+                    .get(name)
+                    .ok_or_else(|| RuntimeError::new(format!("Undefined variable '{}'", name)))?;
+                self.print_expression(val)?;
             }
             Expression::FunctionCall { name, args } => {
-                if let Some(val) = self.evaluate_expression(Expression::FunctionCall {
+                let val = self.evaluate_expression(Expression::FunctionCall {
                     name: name.clone(),
                     args: args.clone(),
-                }) {
-                    self.print_expression(&val);
-                }
+                })?;
+                self.print_expression(&val)?;
             }
             _ => println!(""),
         }
+        Ok(())
     }
 
-    fn expression_to_string(&self, expr: &Expression) -> String {
+    fn expression_to_string(&self, expr: &Expression) -> Result<String, RuntimeError> {
         match expr {
-            Expression::Number(n) => n.to_string(),
-            Expression::Boolean(b) => b.to_string(),
-            Expression::StringLiteral(s) => format!("\"{}\"", s),
+            Expression::Number(n) => Ok(n.to_string()),
+            Expression::Boolean(b) => Ok(b.to_string()),
+            Expression::StringLiteral(s) => Ok(format!("\"{}\"", s)),
             Expression::StringInterpolation { parts } => {
-                format!("\"{}\"", self.render_interpolation(parts))
+                Ok(format!("\"{}\"", self.render_interpolation(parts)?))
             }
-            Expression::Null => "null".to_string(),
+            Expression::Null => Ok("null".to_string()),
             Expression::Array(arr) => {
-                let elements: Vec<String> =
-                    arr.iter().map(|e| self.expression_to_string(e)).collect();
-                format!("[{}]", elements.join(", "))
+                let elements: Vec<String> = arr
+                    .iter()
+                    .map(|e| self.expression_to_string(e))
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(format!("[{}]", elements.join(", ")))
             }
             Expression::Object(properties) => {
                 let elements: Vec<String> = properties
                     .iter()
-                    .map(|(key, value)| format!("{}: {}", key, self.expression_to_string(value)))
-                    .collect();
-                format!("{{{}}}", elements.join(", "))
+                    .map(|(key, value)| {
+                        self.expression_to_string(value)
+                            .map(|rendered| format!("{}: {}", key, rendered))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(format!("{{{}}}", elements.join(", ")))
             }
             Expression::Variable(name) => {
-                if let Some(val) = self.variables.get(name) {
-                    self.expression_to_string(val)
-                } else {
-                    "undefined".to_string()
-                }
+                let val = self
+                    .variables
+                    .get(name)
+                    .ok_or_else(|| RuntimeError::new(format!("Undefined variable '{}'", name)))?;
+                self.expression_to_string(val)
             }
             Expression::FunctionCall { name, args } => {
-                if let Some(val) = self.evaluate_expression(Expression::FunctionCall {
+                let val = self.evaluate_expression(Expression::FunctionCall {
                     name: name.clone(),
                     args: args.clone(),
-                }) {
-                    self.expression_to_string(&val)
-                } else {
-                    "undefined".to_string()
-                }
+                })?;
+                self.expression_to_string(&val)
             }
-            _ => "".to_string(),
+            _ => Ok("".to_string()),
         }
     }
 
-    fn evaluate_expression(&self, expr: Expression) -> Option<Expression> {
+    fn evaluate_expression(&self, expr: Expression) -> Result<Expression, RuntimeError> {
         match expr {
             Expression::Array(elements) => {
                 let evaluated_elements: Vec<Expression> = elements
                     .into_iter()
-                    .filter_map(|e| self.evaluate_expression(e))
-                    .collect();
-                Some(Expression::Array(evaluated_elements))
+                    .map(|e| self.evaluate_expression(e))
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(Expression::Array(evaluated_elements))
             }
             Expression::Object(properties) => {
-                let evaluated_properties: std::collections::HashMap<String, Expression> =
-                    properties
-                        .into_iter()
-                        .filter_map(|(key, value)| {
-                            if let Some(evaluated_value) = self.evaluate_expression(value) {
-                                Some((key, evaluated_value))
-                            } else {
-                                None
-                            }
-                        })
-                        .collect();
-                Some(Expression::Object(evaluated_properties))
+                let mut evaluated_properties: std::collections::HashMap<String, Expression> =
+                    std::collections::HashMap::new();
+                for (key, value) in properties {
+                    evaluated_properties.insert(key, self.evaluate_expression(value)?);
+                }
+                Ok(Expression::Object(evaluated_properties))
             }
-            Expression::Number(n) => Some(Expression::Number(n)),
-            Expression::Null => Some(Expression::Null),
-            Expression::Boolean(b) => Some(Expression::Boolean(b)),
-            Expression::StringLiteral(s) => Some(Expression::StringLiteral(s)),
+            Expression::Number(n) => Ok(Expression::Number(n)),
+            Expression::Null => Ok(Expression::Null),
+            Expression::Boolean(b) => Ok(Expression::Boolean(b)),
+            Expression::StringLiteral(s) => Ok(Expression::StringLiteral(s)),
             Expression::StringInterpolation { parts } => {
-                Some(Expression::StringLiteral(self.render_interpolation(&parts)))
+                Ok(Expression::StringLiteral(self.render_interpolation(&parts)?))
             }
-            Expression::Variable(name) => self.variables.get(&name).cloned(),
+            Expression::Variable(name) => self
+                .variables
+                .get(&name)
+                .cloned()
+                .ok_or_else(|| RuntimeError::new(format!("Undefined variable '{}'", name))),
             Expression::FunctionCall { name, args } => {
                 let evaluated_args: Vec<Expression> = args
                     .into_iter()
-                    .map(|arg| self.evaluate_expression(arg).unwrap_or(Expression::Null))
-                    .collect();
+                    .map(|arg| self.evaluate_expression(arg))
+                    .collect::<Result<Vec<_>, _>>()?;
 
                 if name.contains('.') {
                     let parts: Vec<&str> = name.split('.').collect();
@@ -439,70 +488,85 @@ impl Runtime {
                             module_state
                         {
                             if !exported {
-                                return None;
+                                return Err(RuntimeError::new(format!(
+                                    "Function '{}.{}' is not exported",
+                                    module_name, func_name
+                                )));
                             }
-                            if let Some(local_vars) = self.bind_arguments(&params, &evaluated_args)
-                            {
-                                let module_funcs_with_exported =
-                                    Rc::new(RefCell::new(module_functions));
-                                let mut nested_runtime = self
-                                    .create_nested_runtime(local_vars, module_funcs_with_exported);
-                                return nested_runtime.execute(&body);
-                            }
+
+                            let local_vars =
+                                self.bind_arguments(&params, &evaluated_args, &name)?;
+
+                            let module_funcs_with_exported = Rc::new(RefCell::new(module_functions));
+                            let mut nested_runtime =
+                                self.create_nested_runtime(local_vars, module_funcs_with_exported);
+                            let value = nested_runtime.execute(&body)?;
+                            return Ok(value.unwrap_or(Expression::Null));
                         }
                     }
                 }
 
                 if let Some(native_func) = self.native_functions.get(&name) {
-                    native_func(evaluated_args)
-                } else if let Some((params, body, _)) = self.functions.borrow().get(&name).cloned()
-                {
-                    if let Some(local_vars) = self.bind_arguments(&params, &evaluated_args) {
-                        let mut nested_runtime =
-                            self.create_nested_runtime(local_vars, self.functions.clone());
-                        nested_runtime.execute(&body)
-                    } else {
-                        None
-                    }
-                } else {
-                    None
+                    return native_func(evaluated_args).ok_or_else(|| {
+                        RuntimeError::new(format!(
+                            "Native function '{}' failed for provided arguments",
+                            name
+                        ))
+                    });
                 }
+
+                if let Some((params, body, _)) = self.functions.borrow().get(&name).cloned() {
+                    let local_vars = self.bind_arguments(&params, &evaluated_args, &name)?;
+                    let mut nested_runtime =
+                        self.create_nested_runtime(local_vars, self.functions.clone());
+                    let value = nested_runtime.execute(&body)?;
+                    return Ok(value.unwrap_or(Expression::Null));
+                }
+
+                Err(RuntimeError::new(format!("Unknown function '{}'", name)))
             }
             Expression::Comparison {
                 left,
                 operator,
                 right,
             } => {
-                let left_val = self.evaluate_expression(*left);
-                let right_val = self.evaluate_expression(*right);
+                let left_val = self.evaluate_expression(*left)?;
+                let right_val = self.evaluate_expression(*right)?;
 
                 match (left_val, right_val) {
-                    (Some(Expression::Number(l)), Some(Expression::Number(r))) => {
+                    (Expression::Number(l), Expression::Number(r)) => match operator.as_str() {
+                        "==" => Ok(Expression::Boolean(l == r)),
+                        "!=" => Ok(Expression::Boolean(l != r)),
+                        ">" => Ok(Expression::Boolean(l > r)),
+                        "<" => Ok(Expression::Boolean(l < r)),
+                        ">=" => Ok(Expression::Boolean(l >= r)),
+                        "<=" => Ok(Expression::Boolean(l <= r)),
+                        _ => Err(RuntimeError::new(format!(
+                            "Unsupported comparison operator '{}'",
+                            operator
+                        ))),
+                    },
+                    (Expression::Boolean(l), Expression::Boolean(r)) => match operator.as_str() {
+                        "==" => Ok(Expression::Boolean(l == r)),
+                        "!=" => Ok(Expression::Boolean(l != r)),
+                        _ => Err(RuntimeError::new(format!(
+                            "Unsupported comparison operator '{}' for booleans",
+                            operator
+                        ))),
+                    },
+                    (Expression::StringLiteral(l), Expression::StringLiteral(r)) => {
                         match operator.as_str() {
-                            "==" => Some(Expression::Boolean(l == r)),
-                            "!=" => Some(Expression::Boolean(l != r)),
-                            ">" => Some(Expression::Boolean(l > r)),
-                            "<" => Some(Expression::Boolean(l < r)),
-                            ">=" => Some(Expression::Boolean(l >= r)),
-                            "<=" => Some(Expression::Boolean(l <= r)),
-                            _ => None,
+                            "==" => Ok(Expression::Boolean(l == r)),
+                            "!=" => Ok(Expression::Boolean(l != r)),
+                            _ => Err(RuntimeError::new(format!(
+                                "Unsupported comparison operator '{}' for strings",
+                                operator
+                            ))),
                         }
                     }
-                    (Some(Expression::Boolean(l)), Some(Expression::Boolean(r))) => {
-                        match operator.as_str() {
-                            "==" => Some(Expression::Boolean(l == r)),
-                            "!=" => Some(Expression::Boolean(l != r)),
-                            _ => None,
-                        }
-                    }
-                    (Some(Expression::StringLiteral(l)), Some(Expression::StringLiteral(r))) => {
-                        match operator.as_str() {
-                            "==" => Some(Expression::Boolean(l == r)),
-                            "!=" => Some(Expression::Boolean(l != r)),
-                            _ => None,
-                        }
-                    }
-                    _ => None,
+                    _ => Err(RuntimeError::new(
+                        "Comparison operands must both be numbers, booleans, or strings",
+                    )),
                 }
             }
             Expression::PropertyAccess { object, property } => {
@@ -510,9 +574,12 @@ impl Runtime {
                     if let Some(module_functions) = self.modules.borrow().get(module_name) {
                         if let Some((_, _, exported)) = module_functions.get(&property) {
                             if !exported {
-                                return None;
+                                return Err(RuntimeError::new(format!(
+                                    "Function '{}.{}' is not exported",
+                                    module_name, property
+                                )));
                             }
-                            return Some(Expression::Variable(format!(
+                            return Ok(Expression::Variable(format!(
                                 "{}::{}",
                                 module_name, property
                             )));
@@ -520,23 +587,29 @@ impl Runtime {
                     }
                 }
 
-                if let Some(evaluated_object) = self.evaluate_expression(*object) {
-                    match evaluated_object {
-                        Expression::Object(properties) => properties.get(&property).cloned(),
-                        _ => None,
-                    }
-                } else {
-                    None
+                match self.evaluate_expression(*object)? {
+                    Expression::Object(properties) => properties
+                        .get(&property)
+                        .cloned()
+                        .ok_or_else(|| RuntimeError::new(format!("Property '{}' not found", property))),
+                    _ => Err(RuntimeError::new(
+                        "Property access target must evaluate to an object",
+                    )),
                 }
             }
         }
     }
 
-    pub fn call_function(&mut self, name: &str, args: Vec<Expression>) -> Option<Expression> {
-        self.evaluate_expression(Expression::FunctionCall {
+    pub fn call_function(
+        &mut self,
+        name: &str,
+        args: Vec<Expression>,
+    ) -> Result<Option<Expression>, RuntimeError> {
+        let value = self.evaluate_expression(Expression::FunctionCall {
             name: name.to_string(),
             args,
-        })
+        })?;
+        Ok(Some(value))
     }
 
     pub fn get_variable(&self, name: &str) -> Option<Expression> {
@@ -547,12 +620,4 @@ impl Runtime {
         self.functions.borrow().contains_key(name)
     }
 
-    pub fn set_functions_snapshot(&mut self, map: FunctionTable) {
-        self.functions = Rc::new(RefCell::new(map));
-    }
-
-    pub fn set_modules_snapshot(&mut self, modules: ModuleTable, module_cache: ModuleTable) {
-        self.modules = Rc::new(RefCell::new(modules));
-        self.module_cache_by_path = Rc::new(RefCell::new(module_cache));
-    }
 }

@@ -7,6 +7,7 @@ use runtime::repl::repl;
 use runtime::runtime::Runtime;
 use std::env;
 use std::fs;
+use std::path::Path;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -40,8 +41,15 @@ fn main() {
 
     match try_parse_program(&code) {
         Ok(statements) => {
-            let mut runtime = Runtime::new();
-            runtime.execute(&statements);
+            let base_dir = Path::new(file_path)
+                .parent()
+                .unwrap_or_else(|| Path::new("."))
+                .to_path_buf();
+            let mut runtime = Runtime::new_with_base_dir(base_dir);
+            if let Err(e) = runtime.execute(&statements) {
+                eprintln!("{}", e);
+                std::process::exit(1);
+            }
         }
         Err(e) => {
             eprintln!("{}", e);

@@ -27,10 +27,13 @@ pub(crate) fn repl() {
             break;
         }
 
-        if input.starts_with("function ")
+        if (input.starts_with("function ")
+            || input.starts_with("export function ")
             || input.starts_with("if ")
             || input.starts_with("for ")
             || input.starts_with("while ")
+            || input.starts_with("test "))
+            && input.trim_end().ends_with(" start")
         {
             in_block = true;
         }
@@ -45,7 +48,9 @@ pub(crate) fn repl() {
         if !in_block {
             match try_parse_program(&buffer) {
                 Ok(statements) => {
-                    runtime.execute(&statements);
+                    if let Err(e) = runtime.execute(&statements) {
+                        eprintln!("{}", e);
+                    }
                 }
                 Err(e) => {
                     eprintln!("{}", e);

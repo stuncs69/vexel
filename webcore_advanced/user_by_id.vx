@@ -1,0 +1,21 @@
+set path "/users/{id}"
+set method "GET"
+
+import common from "./lib/common.vx"
+
+function request(id) start
+    set numeric_id number_from_string(id)
+    set safe_id common.clamp(numeric_id, 1, 120)
+    set score math_multiply(safe_id, 2)
+    set tier common.tier_from_score(score)
+
+    set tags []
+    if safe_id >= 18 start
+        set tags array_push(tags, "adult")
+    end
+    if safe_id < 18 start
+        set tags array_push(tags, "minor")
+    end
+
+    return json_stringify({id: safe_id, score: score, tier: tier, tags: tags})
+end

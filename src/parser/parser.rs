@@ -10,7 +10,7 @@ pub(crate) fn parse_program(code: &str) -> Vec<Statement> {
         .map(str::trim)
         .filter(|line| !line.is_empty())
         .collect();
-    parse_block(&mut lines)
+    parse_block(&mut lines, false)
 }
 
 pub(crate) fn try_parse_program(code: &str) -> Result<Vec<Statement>, ParseError> {
@@ -30,7 +30,7 @@ pub(crate) fn try_parse_program(code: &str) -> Result<Vec<Statement>, ParseError
     }
 }
 
-fn parse_block(lines: &mut VecDeque<&str>) -> Vec<Statement> {
+fn parse_block(lines: &mut VecDeque<&str>, expect_end: bool) -> Vec<Statement> {
     let mut statements = Vec::new();
 
     while let Some(line) = lines.pop_front() {
@@ -44,7 +44,12 @@ fn parse_block(lines: &mut VecDeque<&str>) -> Vec<Statement> {
             Some("while") => statements.push(parse_while_loop(lines, line)),
             Some("import") => statements.push(parse_import_statement(line)),
             Some("test") => statements.push(parse_test_block(lines, line)),
-            Some("end") => break,
+            Some("end") => {
+                if expect_end {
+                    return statements;
+                }
+                panic!("Unexpected end");
+            }
             _ => {
                 if line.contains('(') && line.contains(')') {
                     statements.push(parse_function_call_statement(line));
@@ -53,7 +58,19 @@ fn parse_block(lines: &mut VecDeque<&str>) -> Vec<Statement> {
         }
     }
 
+    if expect_end {
+        panic!("Missing end for block");
+    }
+
     statements
+}
+
+fn strip_required_start_suffix<'a>(header: &'a str, statement: &str) -> &'a str {
+    let trimmed = header.trim_end();
+    trimmed
+        .strip_suffix(" start")
+        .unwrap_or_else(|| panic!("{} statement must end with 'start': {}", statement, header))
+        .trim_end()
 }
 
 fn parse_function_call_statement(expr: &str) -> Statement {
@@ -150,6 +167,7 @@ fn parse_set_statement(first_line: &str, lines: &mut VecDeque<&str>) -> Statemen
 fn parse_function(lines: &mut VecDeque<&str>, header: &str) -> Statement {
     let exported = header.starts_with("export");
     let header = header.trim_start_matches("export ");
+    let header = strip_required_start_suffix(header, "function");
     let name = extract_between(header, "function", "(").trim().to_string();
     let params = extract_between(header, "(", ")")
         .split(',')
@@ -157,7 +175,7 @@ fn parse_function(lines: &mut VecDeque<&str>, header: &str) -> Statement {
         .map(String::from)
         .collect();
 
-    let body = parse_block(lines);
+    let body = parse_block(lines, true);
 
     Statement::Function {
         name,
@@ -168,8 +186,9 @@ fn parse_function(lines: &mut VecDeque<&str>, header: &str) -> Statement {
 }
 
 fn parse_if_statement(lines: &mut VecDeque<&str>, header: &str) -> Statement {
+    let header = strip_required_start_suffix(header, "if");
     let condition = parse_expression(&header[3..].trim());
-    let body = parse_block(lines);
+    let body = parse_block(lines, true);
 
     Statement::If { condition, body }
 }
@@ -328,16 +347,16 @@ fn parse_property_access(expr: &str) -> Expression {
 }
 
 fn parse_for_loop(lines: &mut VecDeque<&str>, header: &str) -> Statement {
+    let header = strip_required_start_suffix(header, "for");
     let parts: Vec<&str> = header.split_whitespace().collect();
     if parts[2] != "in" {
         panic!("Invalid for loop syntax: {}", header);
     }
 
     let variable = parts[1].to_string();
-    let mut bind = parts[3..].join(" ");
-    bind = bind.strip_suffix(" start").unwrap_or(&bind).to_string();
+    let bind = parts[3..].join(" ");
     let iterable = parse_expression(&bind);
-    let body = parse_block(lines);
+    let body = parse_block(lines, true);
 
     Statement::ForLoop {
         variable,
@@ -347,12 +366,10 @@ fn parse_for_loop(lines: &mut VecDeque<&str>, header: &str) -> Statement {
 }
 
 fn parse_while_loop(lines: &mut VecDeque<&str>, header: &str) -> Statement {
+    let header = strip_required_start_suffix(header, "while");
     let condition_str = header[6..].trim();
-    let condition_str = condition_str
-        .strip_suffix(" start")
-        .unwrap_or(condition_str);
     let condition = parse_expression(condition_str);
-    let body = parse_block(lines);
+    let body = parse_block(lines, true);
 
     Statement::WhileLoop { condition, body }
 }
@@ -388,6 +405,7 @@ fn parse_function_call(expr: &str) -> Expression {
 }
 
 fn parse_test_block(lines: &mut VecDeque<&str>, header: &str) -> Statement {
+    let header = strip_required_start_suffix(header, "test");
     let name_start = header.find('"').unwrap_or(0);
     let name_end = header[name_start + 1..]
         .find('"')
@@ -399,7 +417,7 @@ fn parse_test_block(lines: &mut VecDeque<&str>, header: &str) -> Statement {
         "Unnamed Test".to_string()
     };
 
-    let body = parse_block(lines);
+    let body = parse_block(lines, true);
 
     Statement::Test { name, body }
 }
@@ -677,7 +695,7 @@ fn extract_balanced_braces(chars: &mut std::iter::Peekable<std::str::Chars>) -> 
 
 #[cfg(test)]
 mod tests {
-    use super::parse_program;
+    use super::{parse_program, try_parse_program};
     use crate::parser::ast::{Expression, Statement};
 
     #[test]
@@ -716,5 +734,29 @@ mod tests {
             }
             _ => panic!("Expected set statement"),
         }
+    }
+
+    #[test]
+    fn parse_program_rejects_if_without_start() {
+        let result = try_parse_program("if true\nprint 1\nend\n");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.message.contains("if statement must end with 'start'"));
+    }
+
+    #[test]
+    fn parse_program_rejects_missing_end_for_block() {
+        let result = try_parse_program("function add(x) start\nreturn x\n");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.message.contains("Missing end for block"));
+    }
+
+    #[test]
+    fn parse_program_rejects_unexpected_end() {
+        let result = try_parse_program("end\n");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.message.contains("Unexpected end"));
     }
 }

@@ -1,0 +1,18 @@
+set path "/jobs/{name}"
+set method "POST"
+
+import common from "./lib/common.vx"
+
+function request(name) start
+    set normalized string_to_lower(name)
+    set normalized string_replace(normalized, "-", "_")
+
+    set plan {
+        job: normalized,
+        accepted: true,
+        priority: common.tier_from_score(80),
+        steps: ["validate", "enqueue", "notify"]
+    }
+
+    return json_stringify(plan)
+end

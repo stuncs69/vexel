@@ -25,6 +25,17 @@ fn reports_parse_errors_with_non_zero_exit() {
 }
 
 #[test]
+fn reports_runtime_errors_with_non_zero_exit() {
+    let workspace = create_workspace("runtime_error");
+    let script = write_workspace_file(&workspace, "main.vx", "print missing_value\n");
+    let arg = script.to_string_lossy().to_string();
+
+    let output = run_vexel(&workspace, &[&arg]);
+    assert!(!output.status.success());
+    assert!(stderr_text(&output).contains("Undefined variable 'missing_value'"));
+}
+
+#[test]
 fn webcore_mode_without_routes_exits_successfully() {
     let workspace = create_workspace("webcore_empty");
     let arg = workspace.to_string_lossy().to_string();
