@@ -286,6 +286,7 @@ A `.vx` file can define an HTTP route using top-level variables:
 ```vx
 set path "/users/{id}"
 set method "GET"
+set mime "application/json"
 
 function request(id) start
     return json_stringify({id: id})
@@ -297,6 +298,8 @@ WebCore behavior:
 - loads all `.vx` files from a folder.
 - default route path is `/<filename_without_ext>` if `path` is absent.
 - default method is `GET` if `method` is absent.
+- default MIME type is `text/plain` if `mime` is absent.
+- `mime` sets the HTTP `Content-Type` response header for that route.
 - current path templating supports one captured segment pattern per route usage.
 
 ## 10. Current Limitations / Gotchas

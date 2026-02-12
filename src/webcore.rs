@@ -4,7 +4,7 @@ use crate::runtime::runtime::Runtime;
 use regex::Regex;
 use std::fs;
 use std::path::Path;
-use tiny_http::{Response, Server};
+use tiny_http::{Header, Response, Server};
 
 pub fn run(folder: &str) {
     let mut routes: Vec<Route> = Vec::new();
@@ -69,6 +69,14 @@ pub fn run(folder: &str) {
             })
             .unwrap_or_else(|| "GET".to_string());
 
+        let mime_value = runtime
+            .get_variable("mime")
+            .and_then(|e| match e {
+                Expression::StringLiteral(s) => Some(s),
+                _ => None,
+            })
+            .unwrap_or_else(|| "text/plain".to_string());
+
         if !runtime.has_function("request") {
             eprintln!(
                 "[webcore] File '{}' does not define exported function 'request', skipping",
@@ -77,7 +85,7 @@ pub fn run(folder: &str) {
             continue;
         }
 
-        routes.push(Route::new(path_value, method_value, runtime));
+        routes.push(Route::new(path_value, method_value, mime_value, runtime));
     }
 
     if routes.is_empty() {
@@ -120,7 +128,11 @@ pub fn run(folder: &str) {
                 })
                 .unwrap_or_else(|| "".to_string());
 
-            let _ = request.respond(Response::from_string(body));
+            let mut response = Response::from_string(body);
+            if let Ok(content_type) = Header::from_bytes(b"Content-Type", route.mime.as_bytes()) {
+                response = response.with_header(content_type);
+            }
+            let _ = request.respond(response);
         } else {
             let _ = request.respond(Response::from_string("Not Found").with_status_code(404));
         }
@@ -130,12 +142,13 @@ pub fn run(folder: &str) {
 struct Route {
     path: String,
     method: String,
+    mime: String,
     path_regex: Option<Regex>,
     runtime: Runtime,
 }
 
 impl Route {
-    fn new(path: String, method: String, runtime: Runtime) -> Self {
+    fn new(path: String, method: String, mime: String, runtime: Runtime) -> Self {
         let path_regex = if path.contains('{') {
             Some(build_path_regex(&path))
         } else {
@@ -145,6 +158,7 @@ impl Route {
         Self {
             path,
             method,
+            mime,
             path_regex,
             runtime,
         }
