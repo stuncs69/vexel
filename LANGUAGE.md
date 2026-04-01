@@ -177,6 +177,9 @@ Supported expression forms:
 - literals: `123`, `true`, `null`, `"text"`
 - variables: `name`
 - function calls: `f(1,2)`
+- unary operators: `-`, `~`
+- arithmetic operators: `+`, `-`, `*`, `/`, `%`
+- bitwise operators: `&`, `|`, `<<`, `>>`
 - comparisons: `==`, `!=`, `<`, `>`, `<=`, `>=`
 - arrays: `[1,2,3]`
 - objects: `{a: 1, b: "x"}`
@@ -190,11 +193,19 @@ set who "world"
 print "hello ${who}"
 ```
 
-### `+` operator behavior
+### Arithmetic and bitwise operators
 
-`+` is parsed as chained `string_concat(...)`, not numeric addition.
+```vx
+print 1 + 2 * 3
+print (1 + 2) * 3
+print 8 >> 1
+print 6 & 3
+print ~1
+```
 
-Use `math_add(a, b)` for numeric addition.
+`+` now performs numeric addition.
+
+For string building, use interpolation or `string_concat(...)`.
 
 ## 6. Runtime and Errors
 
@@ -309,7 +320,10 @@ Nested imports also resolve relative to their own file locations.
 - `dump_type(value)`
 - `assert_equal(a, b)`
 
-Note: debug helpers may be incompatible with strict fail-fast flows because some return no value.
+Notes:
+
+- debug helpers return no value.
+- `assert_equal(a, b)` currently prints a failure message but does not stop execution.
 
 ## 9. WebCore
 
@@ -336,11 +350,11 @@ WebCore behavior:
 
 ## 10. Current Limitations / Gotchas
 
-- No `else` keyword.
 - No logical operators like `&&` / `||`.
 - Expressions are mostly expected on one line.
-- `null` is not a direct parser literal token.
 - Numeric type is integer-only (`i32`).
+- Arithmetic, bitwise, and shift operators require numeric operands.
+- String concatenation is explicit: use interpolation or `string_concat(...)`.
 - Function argument counts must match exactly.
 - `test` blocks do not inherit outer variables.
 

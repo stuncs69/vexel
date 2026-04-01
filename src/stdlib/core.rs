@@ -31,6 +31,8 @@ pub fn core_functions() -> Vec<NativeFunctionEntry> {
                     Expression::PropertyAccess { .. } => "property_access",
                     Expression::Variable(_) => "variable",
                     Expression::Comparison { .. } => "comparison",
+                    Expression::BinaryOperation { .. } => "binary_operation",
+                    Expression::UnaryOperation { .. } => "unary_operation",
                     Expression::StringInterpolation { .. } => "string",
                 };
                 Some(Expression::StringLiteral(type_name.to_string()))

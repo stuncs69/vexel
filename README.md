@@ -8,7 +8,9 @@ Vexel is an interpreted scripting language designed for simple, readable automat
 - **Dynamic Typing**: No need to explicitly declare variable types.
 - **Fail-fast Runtime**: Parsing/runtime errors stop execution with clear stderr output.
 - **Structured Control Flow**: Supports `if`, `else if`, `else`, `for`, `while`, `break`, and `continue`.
+- **Operators**: Supports arithmetic (`+`, `-`, `*`, `/`, `%`) and bitwise (`&`, `|`, `~`, `<<`, `>>`) expressions.
 - **Runtime Error Handling**: `try` / `catch` can recover from runtime failures inside scripts.
+- **Opt-in Script Tests**: `test` blocks run only with the `--test` CLI flag.
 - **Script-relative Imports**: `import` paths are resolved relative to the importing `.vx` file.
 - **Literal `null` Support**: `null` is a first-class runtime value and parsed literal.
 - **Message-passing Threads**: Thread primitives use channels (`thread_channel`, `thread_send`, `thread_recv`, `thread_close`).
@@ -80,6 +82,7 @@ target/release/vexel --test script.vx
 - `if` blocks can use `else if` and `else`.
 - Loops support `break` and `continue`.
 - `try` / `catch` can handle runtime errors and bind the error message to a variable.
+- `+` is numeric addition; use interpolation or `string_concat(...)` for strings.
 - `null` is available as a literal.
 - `test` blocks only run when the CLI is invoked with `--test`.
 - Runtime errors are fail-fast and return a non-zero exit code in CLI mode.

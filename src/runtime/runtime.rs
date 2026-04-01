@@ -510,6 +510,10 @@ impl Runtime {
                 })?;
                 self.print_expression(&val)?;
             }
+            Expression::BinaryOperation { .. } | Expression::UnaryOperation { .. } => {
+                let val = self.evaluate_expression(expr.clone())?;
+                self.print_expression(&val)?;
+            }
             _ => println!(),
         }
         Ok(())
@@ -553,6 +557,10 @@ impl Runtime {
                     name: name.clone(),
                     args: args.clone(),
                 })?;
+                self.expression_to_string(&val)
+            }
+            Expression::BinaryOperation { .. } | Expression::UnaryOperation { .. } => {
+                let val = self.evaluate_expression(expr.clone())?;
                 self.expression_to_string(&val)
             }
             _ => Ok("".to_string()),
@@ -693,6 +701,57 @@ impl Runtime {
                     _ => Err(RuntimeError::new(
                         "Comparison operands must both be numbers, booleans, or strings",
                     )),
+                }
+            }
+            Expression::BinaryOperation {
+                left,
+                operator,
+                right,
+            } => {
+                let left_val = self.evaluate_expression(*left)?;
+                let right_val = self.evaluate_expression(*right)?;
+
+                match (left_val, right_val) {
+                    (Expression::Number(l), Expression::Number(r)) => match operator.as_str() {
+                        "+" => Ok(Expression::Number(l + r)),
+                        "-" => Ok(Expression::Number(l - r)),
+                        "*" => Ok(Expression::Number(l * r)),
+                        "/" if r != 0 => Ok(Expression::Number(l / r)),
+                        "%" if r != 0 => Ok(Expression::Number(l % r)),
+                        "&" => Ok(Expression::Number(l & r)),
+                        "|" => Ok(Expression::Number(l | r)),
+                        "<<" if r >= 0 => Ok(Expression::Number(l.wrapping_shl(r as u32))),
+                        ">>" if r >= 0 => Ok(Expression::Number(l.wrapping_shr(r as u32))),
+                        "/" | "%" => Err(RuntimeError::new(
+                            "Division and modulo by zero are not allowed",
+                        )),
+                        "<<" | ">>" => Err(RuntimeError::new(
+                            "Shift count must be a non-negative number",
+                        )),
+                        _ => Err(RuntimeError::new(format!(
+                            "Unsupported binary operator '{}'",
+                            operator
+                        ))),
+                    },
+                    _ => Err(RuntimeError::new(format!(
+                        "Binary operator '{}' requires numeric operands",
+                        operator
+                    ))),
+                }
+            }
+            Expression::UnaryOperation { operator, expr } => {
+                let value = self.evaluate_expression(*expr)?;
+                match (operator.as_str(), value) {
+                    ("-", Expression::Number(number)) => Ok(Expression::Number(-number)),
+                    ("~", Expression::Number(number)) => Ok(Expression::Number(!number)),
+                    ("-", _) | ("~", _) => Err(RuntimeError::new(format!(
+                        "Unary operator '{}' requires a numeric operand",
+                        operator
+                    ))),
+                    _ => Err(RuntimeError::new(format!(
+                        "Unsupported unary operator '{}'",
+                        operator
+                    ))),
                 }
             }
             Expression::PropertyAccess { object, property } => {

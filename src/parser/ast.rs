@@ -82,6 +82,15 @@ pub(crate) enum Expression {
         operator: String,
         right: Box<Expression>,
     },
+    BinaryOperation {
+        left: Box<Expression>,
+        operator: String,
+        right: Box<Expression>,
+    },
+    UnaryOperation {
+        operator: String,
+        expr: Box<Expression>,
+    },
     Null,
     Array(Vec<Expression>),
     Object(HashMap<String, Expression>),

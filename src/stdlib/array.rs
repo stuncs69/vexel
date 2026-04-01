@@ -140,6 +140,8 @@ fn array_to_string(args: Vec<Expression>) -> Option<Expression> {
                 }
                 Expression::Variable(name) => name.clone(),
                 Expression::Comparison { .. } => String::new(),
+                Expression::BinaryOperation { .. } => String::new(),
+                Expression::UnaryOperation { .. } => String::new(),
             })
             .collect::<Vec<String>>()
             .join("");

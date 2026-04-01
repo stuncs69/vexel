@@ -336,7 +336,115 @@ fn parse_try_catch_statement(lines: &mut VecDeque<&str>, header: &str) -> Statem
 }
 
 fn parse_expression(expr: &str) -> Expression {
+    parse_comparison(expr.trim())
+}
+
+fn parse_comparison(expr: &str) -> Expression {
+    if let Some((operator_pos, operator)) =
+        find_top_level_binary_operator(expr, &["==", "!=", "<=", ">=", "<", ">"])
+    {
+        let left = parse_bitwise_or(expr[..operator_pos].trim());
+        let right = parse_bitwise_or(expr[operator_pos + operator.len()..].trim());
+        return Expression::Comparison {
+            left: Box::new(left),
+            operator: operator.to_string(),
+            right: Box::new(right),
+        };
+    }
+
+    parse_bitwise_or(expr)
+}
+
+fn parse_bitwise_or(expr: &str) -> Expression {
+    if let Some((operator_pos, operator)) = find_top_level_binary_operator(expr, &["|"]) {
+        return Expression::BinaryOperation {
+            left: Box::new(parse_bitwise_or(expr[..operator_pos].trim())),
+            operator: operator.to_string(),
+            right: Box::new(parse_bitwise_and(
+                expr[operator_pos + operator.len()..].trim(),
+            )),
+        };
+    }
+
+    parse_bitwise_and(expr)
+}
+
+fn parse_bitwise_and(expr: &str) -> Expression {
+    if let Some((operator_pos, operator)) = find_top_level_binary_operator(expr, &["&"]) {
+        return Expression::BinaryOperation {
+            left: Box::new(parse_bitwise_and(expr[..operator_pos].trim())),
+            operator: operator.to_string(),
+            right: Box::new(parse_shift(expr[operator_pos + operator.len()..].trim())),
+        };
+    }
+
+    parse_shift(expr)
+}
+
+fn parse_shift(expr: &str) -> Expression {
+    if let Some((operator_pos, operator)) = find_top_level_binary_operator(expr, &["<<", ">>"]) {
+        return Expression::BinaryOperation {
+            left: Box::new(parse_shift(expr[..operator_pos].trim())),
+            operator: operator.to_string(),
+            right: Box::new(parse_additive(expr[operator_pos + operator.len()..].trim())),
+        };
+    }
+
+    parse_additive(expr)
+}
+
+fn parse_additive(expr: &str) -> Expression {
+    if let Some((operator_pos, operator)) = find_top_level_binary_operator(expr, &["+", "-"]) {
+        return Expression::BinaryOperation {
+            left: Box::new(parse_additive(expr[..operator_pos].trim())),
+            operator: operator.to_string(),
+            right: Box::new(parse_multiplicative(
+                expr[operator_pos + operator.len()..].trim(),
+            )),
+        };
+    }
+
+    parse_multiplicative(expr)
+}
+
+fn parse_multiplicative(expr: &str) -> Expression {
+    if let Some((operator_pos, operator)) = find_top_level_binary_operator(expr, &["*", "/", "%"]) {
+        return Expression::BinaryOperation {
+            left: Box::new(parse_multiplicative(expr[..operator_pos].trim())),
+            operator: operator.to_string(),
+            right: Box::new(parse_unary(expr[operator_pos + operator.len()..].trim())),
+        };
+    }
+
+    parse_unary(expr)
+}
+
+fn parse_unary(expr: &str) -> Expression {
     let expr = expr.trim();
+
+    if let Some(rest) = expr.strip_prefix('~') {
+        return Expression::UnaryOperation {
+            operator: "~".to_string(),
+            expr: Box::new(parse_unary(rest.trim())),
+        };
+    }
+
+    if should_parse_as_unary_minus(expr) {
+        return Expression::UnaryOperation {
+            operator: "-".to_string(),
+            expr: Box::new(parse_unary(expr[1..].trim())),
+        };
+    }
+
+    parse_primary(expr)
+}
+
+fn parse_primary(expr: &str) -> Expression {
+    let trimmed = expr.trim();
+    let expr = strip_grouping_parentheses(trimmed);
+    if expr != trimmed {
+        return parse_expression(expr);
+    }
 
     if let Ok(num) = expr.parse::<i32>() {
         return Expression::Number(num);
@@ -354,9 +462,8 @@ fn parse_expression(expr: &str) -> Expression {
         let content = &expr[1..expr.len() - 1];
         if content.contains("${") {
             return parse_interpolated_string(content);
-        } else {
-            return Expression::StringLiteral(content.to_string());
         }
+        return Expression::StringLiteral(content.to_string());
     }
 
     if expr.starts_with('[') && expr.ends_with(']') {
@@ -365,31 +472,6 @@ fn parse_expression(expr: &str) -> Expression {
 
     if expr.starts_with('{') && expr.ends_with('}') {
         return parse_object(expr);
-    }
-
-    if expr.contains('+') {
-        let parts: Vec<&str> = expr.split('+').map(str::trim).collect();
-        if parts.len() >= 2 {
-            let mut current = parse_expression(parts[0]);
-            for part in &parts[1..] {
-                let right = parse_expression(part);
-                current = Expression::FunctionCall {
-                    name: "string_concat".to_string(),
-                    args: vec![current, right],
-                };
-            }
-            return current;
-        }
-    }
-
-    if let Some((operator_pos, operator)) = find_top_level_comparison_operator(expr) {
-        let left = parse_expression(expr[..operator_pos].trim());
-        let right = parse_expression(expr[operator_pos + operator.len()..].trim());
-        return Expression::Comparison {
-            left: Box::new(left),
-            operator: operator.to_string(),
-            right: Box::new(right),
-        };
     }
 
     if expr.contains('(') && expr.contains(')') {
@@ -665,6 +747,131 @@ fn split_top_level_once(s: &str, delimiter: char) -> Vec<&str> {
     vec![s.trim()]
 }
 
+fn strip_grouping_parentheses(mut expr: &str) -> &str {
+    loop {
+        let trimmed = expr.trim();
+        if trimmed.len() < 2 || !trimmed.starts_with('(') || !trimmed.ends_with(')') {
+            return trimmed;
+        }
+
+        let mut depth = 0;
+        let mut in_string = false;
+        let mut escaped = false;
+        let mut wraps_entire_expression = true;
+
+        for (idx, ch) in trimmed.char_indices() {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+
+            match ch {
+                '\\' if in_string => escaped = true,
+                '"' => in_string = !in_string,
+                '(' if !in_string => depth += 1,
+                ')' if !in_string => {
+                    depth -= 1;
+                    if depth == 0 && idx != trimmed.len() - 1 {
+                        wraps_entire_expression = false;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if !wraps_entire_expression || depth != 0 {
+            return trimmed;
+        }
+
+        expr = &trimmed[1..trimmed.len() - 1];
+    }
+}
+
+fn should_parse_as_unary_minus(expr: &str) -> bool {
+    expr.starts_with('-') && expr.parse::<i32>().is_err()
+}
+
+fn find_top_level_binary_operator<'a>(
+    expr: &'a str,
+    operators: &'a [&'a str],
+) -> Option<(usize, &'a str)> {
+    let mut depth_curly = 0;
+    let mut depth_square = 0;
+    let mut depth_paren = 0;
+    let mut in_string = false;
+    let mut escaped = false;
+    let mut last_match = None;
+
+    for (idx, ch) in expr.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+
+        match ch {
+            '\\' if in_string => escaped = true,
+            '"' => in_string = !in_string,
+            '{' if !in_string => depth_curly += 1,
+            '}' if !in_string => depth_curly -= 1,
+            '[' if !in_string => depth_square += 1,
+            ']' if !in_string => depth_square -= 1,
+            '(' if !in_string => depth_paren += 1,
+            ')' if !in_string => depth_paren -= 1,
+            _ => {
+                if !in_string && depth_curly == 0 && depth_square == 0 && depth_paren == 0 {
+                    for operator in operators {
+                        if expr[idx..].starts_with(operator)
+                            && !is_shift_fragment(expr, idx, operator)
+                            && !is_unary_operator_position(expr, idx, operator)
+                        {
+                            last_match = Some((idx, *operator));
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    last_match
+}
+
+fn is_shift_fragment(expr: &str, idx: usize, operator: &str) -> bool {
+    matches!(operator, "<" | ">")
+        && (expr[idx..].starts_with(&format!("{operator}{operator}"))
+            || expr[..idx].ends_with(operator))
+}
+
+fn is_unary_operator_position(expr: &str, idx: usize, operator: &str) -> bool {
+    if operator != "-" && operator != "+" {
+        return false;
+    }
+
+    let previous = expr[..idx].chars().rev().find(|ch| !ch.is_whitespace());
+
+    matches!(
+        previous,
+        None | Some(
+            '(' | '['
+                | '{'
+                | ','
+                | ':'
+                | '+'
+                | '-'
+                | '*'
+                | '/'
+                | '%'
+                | '&'
+                | '|'
+                | '<'
+                | '>'
+                | '='
+                | '!'
+        )
+    )
+}
+
 fn strip_inline_comment(line: &str) -> &str {
     let mut in_string = false;
     let mut escaped = false;
@@ -684,44 +891,6 @@ fn strip_inline_comment(line: &str) -> &str {
     }
 
     line
-}
-
-fn find_top_level_comparison_operator(expr: &str) -> Option<(usize, &'static str)> {
-    let operators = ["==", "!=", "<=", ">=", "<", ">"];
-    let mut depth_curly = 0;
-    let mut depth_square = 0;
-    let mut depth_paren = 0;
-    let mut in_string = false;
-    let mut escaped = false;
-
-    for (idx, ch) in expr.char_indices() {
-        if escaped {
-            escaped = false;
-            continue;
-        }
-
-        match ch {
-            '\\' if in_string => escaped = true,
-            '"' => in_string = !in_string,
-            '{' if !in_string => depth_curly += 1,
-            '}' if !in_string => depth_curly -= 1,
-            '[' if !in_string => depth_square += 1,
-            ']' if !in_string => depth_square -= 1,
-            '(' if !in_string => depth_paren += 1,
-            ')' if !in_string => depth_paren -= 1,
-            _ => {
-                if !in_string && depth_curly == 0 && depth_square == 0 && depth_paren == 0 {
-                    for op in operators {
-                        if expr[idx..].starts_with(op) {
-                            return Some((idx, op));
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    None
 }
 
 fn parse_interpolated_string(content: &str) -> Expression {
@@ -922,6 +1091,27 @@ mod tests {
                 catch_body,
                 ..
             } if error_var == "err" && !catch_body.is_empty()
+        ));
+    }
+
+    #[test]
+    fn parse_expression_respects_operator_precedence() {
+        let statements = parse_program("set value 1 + 2 * 3\n");
+        assert!(matches!(
+            &statements[0],
+            Statement::Set {
+                value:
+                    Expression::BinaryOperation {
+                        operator,
+                        right,
+                        ..
+                    },
+                ..
+            } if operator == "+"
+                && matches!(
+                    right.as_ref(),
+                    Expression::BinaryOperation { operator, .. } if operator == "*"
+                )
         ));
     }
 }

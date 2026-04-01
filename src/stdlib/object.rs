@@ -116,6 +116,8 @@ fn object_to_string_impl(expr: &Expression) -> String {
         Expression::Variable(_) => "\"<variable>\"".to_string(),
         Expression::FunctionCall { .. } => "\"<function call>\"".to_string(),
         Expression::Comparison { .. } => "\"<comparison>\"".to_string(),
+        Expression::BinaryOperation { .. } => "\"<binary operation>\"".to_string(),
+        Expression::UnaryOperation { .. } => "\"<unary operation>\"".to_string(),
         Expression::PropertyAccess { .. } => "\"<property access>\"".to_string(),
         Expression::StringInterpolation { .. } => "\"<string interpolation>\"".to_string(),
     }

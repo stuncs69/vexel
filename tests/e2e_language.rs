@@ -334,3 +334,31 @@ print "after"
     );
     assert_stdout_lines(&output, &["Undefined variable 'missing_value'", "after"]);
 }
+
+#[test]
+fn executes_arithmetic_and_bitwise_operators() {
+    let workspace = create_workspace("operators");
+    write_workspace_file(
+        &workspace,
+        "main.vx",
+        r#"
+print 1 + 2 * 3
+print (1 + 2) * 3
+print 10 % 3
+print 8 >> 1
+print 1 << 3
+print 6 & 3
+print 4 | 1
+print ~1
+print -5 + 2
+"#,
+    );
+
+    let output = run_script(&workspace, "main.vx");
+    assert!(
+        output.status.success(),
+        "script failed: {}",
+        stderr_text(&output)
+    );
+    assert_stdout_lines(&output, &["7", "9", "1", "4", "8", "2", "5", "-2", "-3"]);
+}
