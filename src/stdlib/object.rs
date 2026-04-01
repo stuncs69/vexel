@@ -1,6 +1,7 @@
+use super::NativeFunctionEntry;
 use crate::parser::ast::Expression;
 
-pub fn object_functions() -> Vec<(&'static str, fn(Vec<Expression>) -> Option<Expression>)> {
+pub fn object_functions() -> Vec<NativeFunctionEntry> {
     vec![
         ("object_to_string", |args: Vec<Expression>| {
             if args.len() == 1 {
@@ -23,8 +24,8 @@ pub fn object_functions() -> Vec<(&'static str, fn(Vec<Expression>) -> Option<Ex
             if args.len() == 1 {
                 if let Expression::Object(properties) = &args[0] {
                     let keys = properties
-                        .iter()
-                        .map(|(key, _)| Expression::StringLiteral(key.clone()))
+                        .keys()
+                        .map(|key| Expression::StringLiteral(key.clone()))
                         .collect();
                     Some(Expression::Array(keys))
                 } else {
@@ -37,7 +38,7 @@ pub fn object_functions() -> Vec<(&'static str, fn(Vec<Expression>) -> Option<Ex
         ("object_values", |args: Vec<Expression>| {
             if args.len() == 1 {
                 if let Expression::Object(properties) = &args[0] {
-                    let values = properties.iter().map(|(_, value)| value.clone()).collect();
+                    let values = properties.values().cloned().collect();
                     Some(Expression::Array(values))
                 } else {
                     None
@@ -76,7 +77,7 @@ pub fn object_functions() -> Vec<(&'static str, fn(Vec<Expression>) -> Option<Ex
             }
         }),
         ("object_create", |args: Vec<Expression>| {
-            if args.len() % 2 == 0 {
+            if args.len().is_multiple_of(2) {
                 let mut properties = std::collections::HashMap::new();
 
                 for i in (0..args.len()).step_by(2) {
@@ -102,7 +103,7 @@ fn object_to_string_impl(expr: &Expression) -> String {
         Expression::StringLiteral(s) => format!("\"{}\"", s),
         Expression::Null => "null".to_string(),
         Expression::Array(arr) => {
-            let elements: Vec<String> = arr.iter().map(|e| object_to_string_impl(e)).collect();
+            let elements: Vec<String> = arr.iter().map(object_to_string_impl).collect();
             format!("[{}]", elements.join(", "))
         }
         Expression::Object(properties) => {

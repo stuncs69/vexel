@@ -5,10 +5,10 @@ use std::io::{self, Write};
 pub(crate) fn repl() {
     let mut runtime = Runtime::new();
     let mut buffer = String::new();
-    let mut in_block = false;
+    let mut block_depth = 0usize;
 
     loop {
-        if in_block {
+        if block_depth > 0 {
             print!("... ");
         } else {
             print!(">> ");
@@ -30,22 +30,23 @@ pub(crate) fn repl() {
         if (input.starts_with("function ")
             || input.starts_with("export function ")
             || input.starts_with("if ")
+            || input.starts_with("try ")
             || input.starts_with("for ")
             || input.starts_with("while ")
             || input.starts_with("test "))
             && input.trim_end().ends_with(" start")
         {
-            in_block = true;
+            block_depth += 1;
         }
 
         buffer.push_str(input);
         buffer.push('\n');
 
-        if in_block && input == "end" {
-            in_block = false;
+        if input == "end" && block_depth > 0 {
+            block_depth -= 1;
         }
 
-        if !in_block {
+        if block_depth == 0 {
             match try_parse_program(&buffer) {
                 Ok(statements) => {
                     if let Err(e) = runtime.execute(&statements) {

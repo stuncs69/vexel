@@ -24,7 +24,26 @@ fn main() {
         return;
     }
 
-    let file_path = &args[1];
+    let mut run_tests = false;
+    let mut file_path: Option<&str> = None;
+    for arg in args.iter().skip(1) {
+        if arg == "--test" {
+            run_tests = true;
+            continue;
+        }
+
+        if file_path.is_some() {
+            eprintln!("Unexpected argument '{}'", arg);
+            std::process::exit(1);
+        }
+
+        file_path = Some(arg);
+    }
+
+    let Some(file_path) = file_path else {
+        eprintln!("Missing .vx file path");
+        std::process::exit(1);
+    };
 
     if !file_path.ends_with(".vx") {
         eprintln!("File must have '.vx' extension");
@@ -46,7 +65,12 @@ fn main() {
                 .unwrap_or_else(|| Path::new("."))
                 .to_path_buf();
             let mut runtime = Runtime::new_with_base_dir(base_dir);
-            if let Err(e) = runtime.execute(&statements) {
+            let result = if run_tests {
+                runtime.execute_tests(&statements)
+            } else {
+                runtime.execute(&statements).map(|_| ())
+            };
+            if let Err(e) = result {
                 eprintln!("{}", e);
                 std::process::exit(1);
             }

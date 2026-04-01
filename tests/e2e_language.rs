@@ -250,3 +250,87 @@ set _ thread_close(ch)
     );
     assert_stdout_lines(&output, &["5", "done"]);
 }
+
+#[test]
+fn executes_null_literal_features() {
+    let workspace = create_workspace("null_literal");
+    write_workspace_file(
+        &workspace,
+        "main.vx",
+        r#"
+set value null
+print is_null(value)
+print type_of(value)
+"#,
+    );
+
+    let output = run_script(&workspace, "main.vx");
+    assert!(
+        output.status.success(),
+        "script failed: {}",
+        stderr_text(&output)
+    );
+    assert_stdout_lines(&output, &["true", "null"]);
+}
+
+#[test]
+fn executes_else_else_if_break_and_continue() {
+    let workspace = create_workspace("control_flow_extensions");
+    write_workspace_file(
+        &workspace,
+        "main.vx",
+        r#"
+set mode 2
+if mode == 1 start
+    print "one"
+else if mode == 2 start
+    print "two"
+else start
+    print "other"
+end
+
+for x in array_range(6) start
+    if x == 1 start
+        continue
+    end
+    if x == 4 start
+        break
+    end
+    print x
+end
+"#,
+    );
+
+    let output = run_script(&workspace, "main.vx");
+    assert!(
+        output.status.success(),
+        "script failed: {}",
+        stderr_text(&output)
+    );
+    assert_stdout_lines(&output, &["two", "0", "2", "3"]);
+}
+
+#[test]
+fn executes_try_catch() {
+    let workspace = create_workspace("try_catch");
+    write_workspace_file(
+        &workspace,
+        "main.vx",
+        r#"
+try start
+    print missing_value
+catch err start
+    print err
+end
+print "after"
+"#,
+    );
+
+    let output = run_script(&workspace, "main.vx");
+    assert!(
+        output.status.success(),
+        "script failed: {}",
+        stderr_text(&output)
+    );
+    assert_stdout_lines(&output, &["Undefined variable 'missing_value'", "after"]);
+}

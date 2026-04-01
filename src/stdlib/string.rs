@@ -1,6 +1,7 @@
+use super::NativeFunctionEntry;
 use crate::parser::ast::Expression;
 
-pub fn string_functions() -> Vec<(&'static str, fn(Vec<Expression>) -> Option<Expression>)> {
+pub fn string_functions() -> Vec<NativeFunctionEntry> {
     vec![
         ("string_length", |args: Vec<Expression>| {
             if args.len() == 1 {

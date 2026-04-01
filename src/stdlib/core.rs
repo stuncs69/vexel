@@ -1,20 +1,15 @@
+use super::NativeFunctionEntry;
 use crate::parser::ast::Expression;
 use std::thread;
 use std::time::Duration;
 
-pub fn core_functions() -> Vec<(&'static str, fn(Vec<Expression>) -> Option<Expression>)> {
+pub fn core_functions() -> Vec<NativeFunctionEntry> {
     vec![
         ("sleep", |args: Vec<Expression>| {
             if args.len() == 1 {
                 match &args[0] {
-                    Expression::Number(duration) => {
-                        if *duration == 0 {
-                            loop {
-                                thread::sleep(Duration::from_secs(1));
-                            }
-                        } else {
-                            thread::sleep(Duration::from_secs(*duration as u64));
-                        }
+                    Expression::Number(duration) if *duration >= 0 => {
+                        thread::sleep(Duration::from_secs(*duration as u64));
                         Some(Expression::Null)
                     }
                     _ => None,
@@ -29,8 +24,14 @@ pub fn core_functions() -> Vec<(&'static str, fn(Vec<Expression>) -> Option<Expr
                     Expression::StringLiteral(_) => "string",
                     Expression::Number(_) => "number",
                     Expression::Boolean(_) => "boolean",
+                    Expression::Array(_) => "array",
+                    Expression::Object(_) => "object",
                     Expression::Null => "null",
-                    _ => "unknown",
+                    Expression::FunctionCall { .. } => "function_call",
+                    Expression::PropertyAccess { .. } => "property_access",
+                    Expression::Variable(_) => "variable",
+                    Expression::Comparison { .. } => "comparison",
+                    Expression::StringInterpolation { .. } => "string",
                 };
                 Some(Expression::StringLiteral(type_name.to_string()))
             } else {

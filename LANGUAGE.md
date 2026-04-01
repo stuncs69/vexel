@@ -10,6 +10,12 @@ Build and run:
 cargo run -- your_script.vx
 ```
 
+Run tests in a script:
+
+```sh
+cargo run -- --test your_script.vx
+```
+
 Run REPL:
 
 ```sh
@@ -48,11 +54,7 @@ Current runtime values:
 - `object`
 - `null`
 
-Important: `null` is a runtime value but **not** currently parsed as a literal token. A common way to obtain it is:
-
-```vx
-set nil json_parse("null")
-```
+`null` is parsed as a literal token.
 
 ## 4. Statements
 
@@ -84,6 +86,10 @@ print x
 ```vx
 if x > 10 start
     print "big"
+else if x == 10 start
+    print "exact"
+else start
+    print "small"
 end
 ```
 
@@ -95,9 +101,17 @@ for item in arr start
 end
 
 while x < 10 start
+    if x == 3 start
+        break
+    end
     set x math_add(x, 1)
 end
 ```
+
+Loop control:
+
+- `break` exits the nearest loop.
+- `continue` skips to the next loop iteration.
 
 ### 4.6 Functions
 
@@ -134,15 +148,33 @@ end
 
 Behavior:
 
-- test body runs immediately when reached.
+- test bodies do not run during normal script execution.
+- test bodies run only with the `--test` CLI flag.
+- when `--test` is used, only test blocks run.
 - tests run in isolated variable scope (outer variables are not visible).
 - functions are available inside tests.
+
+### 4.9 Error handling
+
+```vx
+try start
+    print risky_value
+catch err start
+    print err
+end
+```
+
+Behavior:
+
+- `try` catches runtime errors raised while executing its body.
+- `catch <name> start` binds the error message string to `<name>`.
+- `return`, `break`, and `continue` are not caught.
 
 ## 5. Expressions
 
 Supported expression forms:
 
-- literals: `123`, `true`, `"text"`
+- literals: `123`, `true`, `null`, `"text"`
 - variables: `name`
 - function calls: `f(1,2)`
 - comparisons: `==`, `!=`, `<`, `>`, `<=`, `>=`

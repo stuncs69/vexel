@@ -30,7 +30,22 @@ pub(crate) fn try_parse_program(code: &str) -> Result<Vec<Statement>, ParseError
     }
 }
 
+enum BlockTerminator {
+    End,
+    Else(String),
+    Catch(String),
+}
+
 fn parse_block(lines: &mut VecDeque<&str>, expect_end: bool) -> Vec<Statement> {
+    parse_block_with_terminators(lines, expect_end, false, false).0
+}
+
+fn parse_block_with_terminators(
+    lines: &mut VecDeque<&str>,
+    expect_end: bool,
+    allow_else: bool,
+    allow_catch: bool,
+) -> (Vec<Statement>, Option<BlockTerminator>) {
     let mut statements = Vec::new();
 
     while let Some(line) = lines.pop_front() {
@@ -38,15 +53,30 @@ fn parse_block(lines: &mut VecDeque<&str>, expect_end: bool) -> Vec<Statement> {
             Some("set") => statements.push(parse_set_statement(line, lines)),
             Some("function") | Some("export") => statements.push(parse_function(lines, line)),
             Some("if") => statements.push(parse_if_statement(lines, line)),
+            Some("try") => statements.push(parse_try_catch_statement(lines, line)),
             Some("print") => statements.push(parse_print_statement(line)),
             Some("return") => statements.push(parse_return_statement(line)),
+            Some("break") => statements.push(parse_break_statement(line)),
+            Some("continue") => statements.push(parse_continue_statement(line)),
             Some("for") => statements.push(parse_for_loop(lines, line)),
             Some("while") => statements.push(parse_while_loop(lines, line)),
             Some("import") => statements.push(parse_import_statement(line)),
             Some("test") => statements.push(parse_test_block(lines, line)),
+            Some("else") => {
+                if allow_else {
+                    return (statements, Some(BlockTerminator::Else(line.to_string())));
+                }
+                panic!("Unexpected else");
+            }
+            Some("catch") => {
+                if allow_catch {
+                    return (statements, Some(BlockTerminator::Catch(line.to_string())));
+                }
+                panic!("Unexpected catch");
+            }
             Some("end") => {
                 if expect_end {
-                    return statements;
+                    return (statements, Some(BlockTerminator::End));
                 }
                 panic!("Unexpected end");
             }
@@ -62,7 +92,7 @@ fn parse_block(lines: &mut VecDeque<&str>, expect_end: bool) -> Vec<Statement> {
         panic!("Missing end for block");
     }
 
-    statements
+    (statements, None)
 }
 
 fn strip_required_start_suffix<'a>(header: &'a str, statement: &str) -> &'a str {
@@ -129,14 +159,12 @@ fn parse_set_statement(first_line: &str, lines: &mut VecDeque<&str>) -> Statemen
 
         let mut result = String::from("{");
         for (i, line) in lines_to_parse.iter().enumerate() {
-            if i > 0 {
-                if !result.ends_with("{") && !result.ends_with(" ") {
-                    result.push_str(" ");
-                }
+            if i > 0 && !result.ends_with('{') && !result.ends_with(' ') {
+                result.push(' ');
             }
             result.push_str(line);
         }
-        result.push_str("}");
+        result.push('}');
 
         value_str = result;
     }
@@ -172,6 +200,7 @@ fn parse_function(lines: &mut VecDeque<&str>, header: &str) -> Statement {
     let params = extract_between(header, "(", ")")
         .split(',')
         .map(str::trim)
+        .filter(|param| !param.is_empty())
         .map(String::from)
         .collect();
 
@@ -187,15 +216,24 @@ fn parse_function(lines: &mut VecDeque<&str>, header: &str) -> Statement {
 
 fn parse_if_statement(lines: &mut VecDeque<&str>, header: &str) -> Statement {
     let header = strip_required_start_suffix(header, "if");
-    let condition = parse_expression(&header[3..].trim());
-    let body = parse_block(lines, true);
+    let condition = parse_expression(header[3..].trim());
+    let (body, terminator) = parse_block_with_terminators(lines, true, true, false);
+    let else_body = match terminator {
+        Some(BlockTerminator::End) => None,
+        Some(BlockTerminator::Else(line)) => Some(parse_else_branch(lines, &line)),
+        Some(BlockTerminator::Catch(_)) | None => panic!("Missing end for if block"),
+    };
 
-    Statement::If { condition, body }
+    Statement::If {
+        condition,
+        body,
+        else_body,
+    }
 }
 
 fn parse_print_statement(line: &str) -> Statement {
     Statement::Print {
-        expr: parse_expression(&line[6..].trim()),
+        expr: parse_expression(line[6..].trim()),
     }
 }
 
@@ -210,6 +248,20 @@ fn parse_return_statement(line: &str) -> Statement {
             expr: Expression::Null,
         }
     }
+}
+
+fn parse_break_statement(line: &str) -> Statement {
+    if line.trim() != "break" {
+        panic!("Invalid break statement: {}", line);
+    }
+    Statement::Break
+}
+
+fn parse_continue_statement(line: &str) -> Statement {
+    if line.trim() != "continue" {
+        panic!("Invalid continue statement: {}", line);
+    }
+    Statement::Continue
 }
 
 fn parse_import_statement(line: &str) -> Statement {
@@ -236,6 +288,53 @@ fn parse_import_statement(line: &str) -> Statement {
     }
 }
 
+fn parse_else_branch(lines: &mut VecDeque<&str>, line: &str) -> Vec<Statement> {
+    if line.trim() == "else start" {
+        return parse_block(lines, true);
+    }
+
+    let else_if_header = line
+        .trim()
+        .strip_prefix("else ")
+        .unwrap_or_else(|| panic!("Invalid else statement: {}", line));
+
+    if !else_if_header.starts_with("if ") {
+        panic!("Invalid else statement: {}", line);
+    }
+
+    vec![parse_if_statement(lines, else_if_header)]
+}
+
+fn parse_try_catch_statement(lines: &mut VecDeque<&str>, header: &str) -> Statement {
+    let try_header = strip_required_start_suffix(header, "try");
+    if try_header.trim() != "try" {
+        panic!("Invalid try statement: {}", header);
+    }
+
+    let (try_body, terminator) = parse_block_with_terminators(lines, true, false, true);
+    let catch_header = match terminator {
+        Some(BlockTerminator::Catch(line)) => line,
+        Some(BlockTerminator::End) | Some(BlockTerminator::Else(_)) | None => {
+            panic!("try block must be followed by catch")
+        }
+    };
+
+    let catch_header = strip_required_start_suffix(&catch_header, "catch");
+    let error_var = catch_header
+        .strip_prefix("catch")
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("error")
+        .to_string();
+    let catch_body = parse_block(lines, true);
+
+    Statement::TryCatch {
+        try_body,
+        error_var,
+        catch_body,
+    }
+}
+
 fn parse_expression(expr: &str) -> Expression {
     let expr = expr.trim();
 
@@ -245,6 +344,10 @@ fn parse_expression(expr: &str) -> Expression {
 
     if expr == "true" || expr == "false" {
         return Expression::Boolean(expr == "true");
+    }
+
+    if expr == "null" {
+        return Expression::Null;
     }
 
     if expr.starts_with('"') && expr.ends_with('"') {
@@ -430,12 +533,14 @@ fn extract_between<'a>(s: &'a str, start: &str, end: &str) -> &'a str {
 
     if (start == "{" && end == "}") || (start == "[" && end == "]") || (start == "(" && end == ")")
     {
+        let start_ch = start.chars().next().unwrap_or_default();
+        let end_ch = end.chars().next().unwrap_or_default();
         let mut depth = 1;
         let mut in_string = false;
         let mut escaped = false;
-        let chars: Vec<char> = s[start_pos..].chars().collect();
+        let content = &s[start_pos..];
 
-        for (i, &ch) in chars.iter().enumerate() {
+        for (i, ch) in content.char_indices() {
             if escaped {
                 escaped = false;
                 continue;
@@ -444,17 +549,17 @@ fn extract_between<'a>(s: &'a str, start: &str, end: &str) -> &'a str {
             match ch {
                 '\\' => escaped = true,
                 '"' => in_string = !in_string,
-                c if c.to_string() == start && !in_string => depth += 1,
-                c if c.to_string() == end && !in_string => {
+                c if c == start_ch && !in_string => depth += 1,
+                c if c == end_ch && !in_string => {
                     depth -= 1;
                     if depth == 0 {
-                        return &s[start_pos..start_pos + i];
+                        return &content[..i];
                     }
                 }
                 _ => {}
             }
         }
-        return &s[start_pos..];
+        return content;
     }
 
     s[start_pos..].split(end).next().unwrap_or(&s[start_pos..])
@@ -471,8 +576,7 @@ fn split_top_level(s: &str, delimiter: char) -> Vec<String> {
     let mut depth_square = 0;
     let mut depth_paren = 0;
     let mut in_string = false;
-    let mut chars = s.chars().peekable();
-    while let Some(c) = chars.next() {
+    for c in s.chars() {
         match c {
             '"' => {
                 current.push(c);
@@ -528,7 +632,7 @@ fn split_top_level_once(s: &str, delimiter: char) -> Vec<&str> {
     let mut depth_square = 0;
     let mut depth_paren = 0;
     let mut in_string = false;
-    for (i, c) in s.chars().enumerate() {
+    for (i, c) in s.char_indices() {
         match c {
             '"' => {
                 let mut backslashes = 0;
@@ -657,7 +761,7 @@ fn extract_balanced_braces(chars: &mut std::iter::Peekable<std::str::Chars>) -> 
     let mut in_string = false;
     let mut escape_next = false;
 
-    while let Some(ch) = chars.next() {
+    for ch in chars.by_ref() {
         if escape_next {
             result.push(ch);
             escape_next = false;
@@ -758,5 +862,66 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(err.message.contains("Unexpected end"));
+    }
+
+    #[test]
+    fn parse_program_handles_utf8_object_keys_without_panicking() {
+        let result = try_parse_program("set obj {føø: 1}\n");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn parse_program_handles_utf8_inside_balanced_delimiters_without_panicking() {
+        let result = try_parse_program("set arr [\"é\"]\n");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn parse_program_recognizes_null_literal() {
+        let statements = parse_program("set value null\n");
+        assert!(matches!(
+            &statements[0],
+            Statement::Set {
+                var,
+                value: Expression::Null
+            } if var == "value"
+        ));
+    }
+
+    #[test]
+    fn parse_program_handles_functions_without_parameters() {
+        let statements = parse_program("function outer() start\nprint \"ok\"\nend\n");
+        assert!(matches!(
+            &statements[0],
+            Statement::Function { name, params, .. } if name == "outer" && params.is_empty()
+        ));
+    }
+
+    #[test]
+    fn parse_program_handles_else_if_and_else() {
+        let statements = parse_program(
+            "if true start\nprint 1\nelse if false start\nprint 2\nelse start\nprint 3\nend\n",
+        );
+        assert!(matches!(
+            &statements[0],
+            Statement::If {
+                else_body: Some(_),
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_program_handles_try_catch() {
+        let statements =
+            parse_program("try start\nprint missing\ncatch err start\nprint err\nend\n");
+        assert!(matches!(
+            &statements[0],
+            Statement::TryCatch {
+                error_var,
+                catch_body,
+                ..
+            } if error_var == "err" && !catch_body.is_empty()
+        ));
     }
 }

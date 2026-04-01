@@ -1,6 +1,7 @@
+use super::NativeFunctionEntry;
 use crate::parser::ast::Expression;
 
-pub fn debug_functions() -> Vec<(&'static str, fn(Vec<Expression>) -> Option<Expression>)> {
+pub fn debug_functions() -> Vec<NativeFunctionEntry> {
     vec![
         ("dump_type", |args: Vec<Expression>| {
             println!("{:?}", args);

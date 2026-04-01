@@ -7,34 +7,43 @@ Vexel is an interpreted scripting language designed for simple, readable automat
 - **Simple Syntax**: Clean and easy-to-read syntax for quick development.
 - **Dynamic Typing**: No need to explicitly declare variable types.
 - **Fail-fast Runtime**: Parsing/runtime errors stop execution with clear stderr output.
+- **Structured Control Flow**: Supports `if`, `else if`, `else`, `for`, `while`, `break`, and `continue`.
+- **Runtime Error Handling**: `try` / `catch` can recover from runtime failures inside scripts.
 - **Script-relative Imports**: `import` paths are resolved relative to the importing `.vx` file.
+- **Literal `null` Support**: `null` is a first-class runtime value and parsed literal.
 - **Message-passing Threads**: Thread primitives use channels (`thread_channel`, `thread_send`, `thread_recv`, `thread_close`).
 
 ## Example Code
 
-```bash
-import custom from "./import.vx"
+```vx
+set scores [42, 77, 91]
+set passing []
 
-set x 5
-set greeting "hello"
-set is_active true
-
-print greeting
-
-function squirrelsay(message) start
-    print string_concat("🐿️ - ", message)
+function label(score) start
+    if score >= 90 start
+        return "excellent"
+    else if score >= 50 start
+        return "passing"
+    else start
+        return "failing"
+    end
 end
 
-set array ["H", "i"]
-set array array_push(array, "!")
-
-if is_active != false start
-    set string_array array_to_string(array)
-    squirrelsay(string_array)
+for score in scores start
+    if score < 50 start
+        continue
+    end
+    set passing array_push(passing, score)
+    print "score=${score}, label=${label(score)}"
 end
 
-custom.is_hello(greeting) # True
+try start
+    print missing_value
+catch err start
+    print "caught=${err}"
+end
 
+print array_join(passing, ",")
 ```
 
 ## Installation
@@ -55,6 +64,12 @@ After building, you can execute Vexel scripts using:
 target/release/vexel script.vx
 ```
 
+Run only the `test` blocks in a script:
+
+```sh
+target/release/vexel --test script.vx
+```
+
 ## Documentation
 
 - Full language reference: [LANGUAGE.md](LANGUAGE.md)
@@ -62,6 +77,11 @@ target/release/vexel script.vx
 ## Language Notes
 
 - Blocks use explicit `start` / `end` delimiters.
+- `if` blocks can use `else if` and `else`.
+- Loops support `break` and `continue`.
+- `try` / `catch` can handle runtime errors and bind the error message to a variable.
+- `null` is available as a literal.
+- `test` blocks only run when the CLI is invoked with `--test`.
 - Runtime errors are fail-fast and return a non-zero exit code in CLI mode.
 - Relative imports are resolved from the importing file's directory.
 - In WebCore routes, optional `mime` controls the `Content-Type` header (default `text/plain`).

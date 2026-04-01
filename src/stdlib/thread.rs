@@ -1,3 +1,4 @@
+use super::NativeFunctionEntry;
 use crate::parser::ast::Expression;
 use rustc_hash::FxHashMap as HashMap;
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -80,7 +81,7 @@ fn thread_close(args: Vec<Expression>) -> Option<Expression> {
     Some(Expression::Null)
 }
 
-pub fn thread_functions() -> Vec<(&'static str, fn(Vec<Expression>) -> Option<Expression>)> {
+pub fn thread_functions() -> Vec<NativeFunctionEntry> {
     vec![
         (
             "thread_channel",

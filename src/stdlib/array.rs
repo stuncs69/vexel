@@ -1,6 +1,7 @@
+use super::NativeFunctionEntry;
 use crate::parser::ast::Expression;
 
-pub fn array_functions() -> Vec<(&'static str, fn(Vec<Expression>) -> Option<Expression>)> {
+pub fn array_functions() -> Vec<NativeFunctionEntry> {
     vec![
         ("array_push", array_push),
         ("array_pop", array_pop),
@@ -108,7 +109,7 @@ fn array_join(args: Vec<Expression>) -> Option<Expression> {
                 Expression::Number(n) => n.to_string(),
                 Expression::Boolean(b) => b.to_string(),
                 Expression::Null => "null".to_string(),
-                _ => "".to_string(),
+                _ => String::new(),
             })
             .collect::<Vec<String>>()
             .join(separator);
@@ -128,27 +129,21 @@ fn array_to_string(args: Vec<Expression>) -> Option<Expression> {
             .map(|e| match e {
                 Expression::Number(n) => n.to_string(),
                 Expression::Boolean(b) => b.to_string(),
-                Expression::StringLiteral(s) => format!("{}", s),
-                Expression::PropertyAccess { object, property } => format!(""),
+                Expression::StringLiteral(s) => s.to_string(),
+                Expression::PropertyAccess { .. } => String::new(),
                 Expression::StringInterpolation { .. } => "<string interpolation>".to_string(),
-                Expression::Object(properties) => format!(""),
+                Expression::Object(_) => String::new(),
                 Expression::Null => "null".to_string(),
                 Expression::Array(_) => "[...]".to_string(),
                 Expression::FunctionCall { name, args } => {
                     format!("{}({:?})", name, args)
                 }
                 Expression::Variable(name) => name.clone(),
-                Expression::Comparison {
-                    left,
-                    operator,
-                    right,
-                } => {
-                    format!("")
-                }
+                Expression::Comparison { .. } => String::new(),
             })
             .collect::<Vec<String>>()
             .join("");
-        Some(Expression::StringLiteral(format!("{}", elements)))
+        Some(Expression::StringLiteral(elements.to_string()))
     } else {
         None
     }

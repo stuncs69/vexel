@@ -1,5 +1,8 @@
 use crate::parser::ast;
 
+pub type NativeFunction = fn(Vec<ast::Expression>) -> Option<ast::Expression>;
+pub type NativeFunctionEntry = (&'static str, NativeFunction);
+
 pub mod array;
 pub mod core;
 pub mod debug;
@@ -11,10 +14,7 @@ mod object;
 pub mod string;
 pub mod thread;
 
-pub fn get_all_native_functions() -> Vec<(
-    &'static str,
-    fn(Vec<ast::Expression>) -> Option<ast::Expression>,
-)> {
+pub fn get_all_native_functions() -> Vec<NativeFunctionEntry> {
     let mut functions = Vec::new();
     functions.extend(math::math_functions());
     functions.extend(array::array_functions());

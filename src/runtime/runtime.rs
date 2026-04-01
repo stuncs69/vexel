@@ -38,6 +38,13 @@ impl fmt::Display for RuntimeError {
 
 impl Error for RuntimeError {}
 
+enum FlowSignal {
+    None,
+    Return(Expression),
+    Break,
+    Continue,
+}
+
 pub struct Runtime {
     variables: HashMap<String, Expression>,
     functions: SharedFunctionTable,
@@ -75,7 +82,79 @@ impl Runtime {
         self.native_functions = Rc::new(map);
     }
 
-    pub(crate) fn execute(&mut self, statements: &[Statement]) -> Result<Option<Expression>, RuntimeError> {
+    pub(crate) fn execute(
+        &mut self,
+        statements: &[Statement],
+    ) -> Result<Option<Expression>, RuntimeError> {
+        match self.execute_with_signal(statements)? {
+            FlowSignal::None => Ok(None),
+            FlowSignal::Return(value) => Ok(Some(value)),
+            FlowSignal::Break => Err(RuntimeError::new("break can only be used inside a loop")),
+            FlowSignal::Continue => {
+                Err(RuntimeError::new("continue can only be used inside a loop"))
+            }
+        }
+    }
+
+    pub(crate) fn execute_tests(&mut self, statements: &[Statement]) -> Result<(), RuntimeError> {
+        self.prepare_test_runtime(statements)?;
+
+        for statement in statements {
+            if let Statement::Test { name, body } = statement {
+                println!("Running test: {}", name);
+                let mut nested_runtime =
+                    self.create_nested_runtime(HashMap::default(), self.functions.clone());
+                match nested_runtime.execute_with_signal(body)? {
+                    FlowSignal::None => {}
+                    FlowSignal::Return(_) => {
+                        return Err(RuntimeError::new(
+                            "return cannot be used at the top level of a test block",
+                        ));
+                    }
+                    FlowSignal::Break => {
+                        return Err(RuntimeError::new("break can only be used inside a loop"));
+                    }
+                    FlowSignal::Continue => {
+                        return Err(RuntimeError::new("continue can only be used inside a loop"));
+                    }
+                }
+                println!("Test '{}' finished", name);
+            }
+        }
+
+        Ok(())
+    }
+
+    fn prepare_test_runtime(&mut self, statements: &[Statement]) -> Result<(), RuntimeError> {
+        for statement in statements {
+            match statement {
+                Statement::Function {
+                    name,
+                    params,
+                    body,
+                    exported,
+                } => {
+                    self.functions
+                        .borrow_mut()
+                        .insert(name.clone(), (params.clone(), body.clone(), *exported));
+                }
+                Statement::Import {
+                    module_name,
+                    file_path,
+                } => {
+                    self.import_module(module_name, file_path)?;
+                }
+                _ => {}
+            }
+        }
+
+        Ok(())
+    }
+
+    fn execute_with_signal(
+        &mut self,
+        statements: &[Statement],
+    ) -> Result<FlowSignal, RuntimeError> {
         for statement in statements {
             match statement {
                 Statement::PropertySet {
@@ -154,24 +233,32 @@ impl Runtime {
                 } => {
                     let iterable_value = self.evaluate_expression(iterable.clone())?;
                     let Expression::Array(elements) = iterable_value else {
-                        return Err(RuntimeError::new("for loop iterable must evaluate to an array"));
+                        return Err(RuntimeError::new(
+                            "for loop iterable must evaluate to an array",
+                        ));
                     };
 
                     for element in elements {
                         self.variables.insert(variable.clone(), element);
-                        if let Some(return_value) = self.execute(body)? {
-                            return Ok(Some(return_value));
+                        match self.execute_with_signal(body)? {
+                            FlowSignal::None => {}
+                            FlowSignal::Continue => continue,
+                            FlowSignal::Break => break,
+                            FlowSignal::Return(value) => return Ok(FlowSignal::Return(value)),
                         }
                     }
                 }
                 Statement::WhileLoop { condition, body } => loop {
                     let cond_value = self.evaluate_expression(condition.clone())?;
                     match cond_value {
-                        Expression::Boolean(true) => {
-                            if let Some(return_value) = self.execute(body)? {
-                                return Ok(Some(return_value));
+                        Expression::Boolean(true) => match self.execute_with_signal(body)? {
+                            FlowSignal::None => {}
+                            FlowSignal::Continue => continue,
+                            FlowSignal::Break => break,
+                            FlowSignal::Return(value) => {
+                                return Ok(FlowSignal::Return(value));
                             }
-                        }
+                        },
                         Expression::Boolean(false) => break,
                         _ => {
                             return Err(RuntimeError::new(
@@ -206,17 +293,27 @@ impl Runtime {
                     self.print_expression(&value)?;
                 }
                 Statement::Return { expr } => {
-                    return Ok(Some(self.evaluate_expression(expr.clone())?));
+                    return Ok(FlowSignal::Return(self.evaluate_expression(expr.clone())?));
                 }
-                Statement::If { condition, body } => {
+                Statement::If {
+                    condition,
+                    body,
+                    else_body,
+                } => {
                     let cond_value = self.evaluate_expression(condition.clone())?;
                     match cond_value {
-                        Expression::Boolean(true) => {
-                            if let Some(return_value) = self.execute(body)? {
-                                return Ok(Some(return_value));
+                        Expression::Boolean(true) => match self.execute_with_signal(body)? {
+                            FlowSignal::None => {}
+                            signal => return Ok(signal),
+                        },
+                        Expression::Boolean(false) => {
+                            if let Some(else_body) = else_body {
+                                match self.execute_with_signal(else_body)? {
+                                    FlowSignal::None => {}
+                                    signal => return Ok(signal),
+                                }
                             }
                         }
-                        Expression::Boolean(false) => {}
                         _ => {
                             return Err(RuntimeError::new(
                                 "if condition must evaluate to a boolean",
@@ -228,51 +325,79 @@ impl Runtime {
                     module_name,
                     file_path,
                 } => {
-                    let resolved_path = self.resolve_import_path(file_path)?;
-                    let cache_key = resolved_path.to_string_lossy().to_string();
-
-                    if let Some(cached) = self.module_cache_by_path.borrow().get(&cache_key).cloned() {
-                        self.modules.borrow_mut().insert(module_name.clone(), cached);
-                        continue;
+                    self.import_module(module_name, file_path)?;
+                }
+                Statement::Test { .. } => {}
+                Statement::Break => return Ok(FlowSignal::Break),
+                Statement::Continue => return Ok(FlowSignal::Continue),
+                Statement::TryCatch {
+                    try_body,
+                    error_var,
+                    catch_body,
+                } => match self.execute_with_signal(try_body) {
+                    Ok(FlowSignal::None) => {}
+                    Ok(signal) => return Ok(signal),
+                    Err(error) => {
+                        let previous_value = self.variables.insert(
+                            error_var.clone(),
+                            Expression::StringLiteral(error.to_string()),
+                        );
+                        let catch_result = self.execute_with_signal(catch_body);
+                        if let Some(value) = previous_value {
+                            self.variables.insert(error_var.clone(), value);
+                        } else {
+                            self.variables.remove(error_var);
+                        }
+                        match catch_result? {
+                            FlowSignal::None => {}
+                            signal => return Ok(signal),
+                        }
                     }
-
-                    let content = fs::read_to_string(&resolved_path).map_err(|e| {
-                        RuntimeError::new(format!(
-                            "Error loading module from '{}': {}",
-                            resolved_path.display(),
-                            e
-                        ))
-                    })?;
-
-                    let module_statements = try_parse_program(&content)
-                        .map_err(|e| RuntimeError::new(format!("{}", e)))?;
-
-                    let module_base_dir = resolved_path
-                        .parent()
-                        .map(Path::to_path_buf)
-                        .unwrap_or_else(|| self.base_dir.clone());
-
-                    let mut module_runtime = Runtime::new_with_base_dir(module_base_dir);
-                    module_runtime.execute(&module_statements)?;
-
-                    let funcs_clone = module_runtime.functions.borrow().clone();
-                    self.modules
-                        .borrow_mut()
-                        .insert(module_name.clone(), funcs_clone.clone());
-                    self.module_cache_by_path
-                        .borrow_mut()
-                        .insert(cache_key, funcs_clone);
-                }
-                Statement::Test { name, body } => {
-                    println!("Running test: {}", name);
-                    let mut nested_runtime =
-                        self.create_nested_runtime(HashMap::default(), self.functions.clone());
-                    let _ = nested_runtime.execute(body)?;
-                    println!("Test '{}' finished", name);
-                }
+                },
             }
         }
-        Ok(None)
+        Ok(FlowSignal::None)
+    }
+
+    fn import_module(&mut self, module_name: &str, file_path: &str) -> Result<(), RuntimeError> {
+        let resolved_path = self.resolve_import_path(file_path)?;
+        let cache_key = resolved_path.to_string_lossy().to_string();
+
+        if let Some(cached) = self.module_cache_by_path.borrow().get(&cache_key).cloned() {
+            self.modules
+                .borrow_mut()
+                .insert(module_name.to_string(), cached);
+            return Ok(());
+        }
+
+        let content = fs::read_to_string(&resolved_path).map_err(|e| {
+            RuntimeError::new(format!(
+                "Error loading module from '{}': {}",
+                resolved_path.display(),
+                e
+            ))
+        })?;
+
+        let module_statements =
+            try_parse_program(&content).map_err(|e| RuntimeError::new(format!("{}", e)))?;
+
+        let module_base_dir = resolved_path
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| self.base_dir.clone());
+
+        let mut module_runtime = Runtime::new_with_base_dir(module_base_dir);
+        module_runtime.execute(&module_statements)?;
+
+        let funcs_clone = module_runtime.functions.borrow().clone();
+        self.modules
+            .borrow_mut()
+            .insert(module_name.to_string(), funcs_clone.clone());
+        self.module_cache_by_path
+            .borrow_mut()
+            .insert(cache_key, funcs_clone);
+
+        Ok(())
     }
 
     fn resolve_import_path(&self, file_path: &str) -> Result<PathBuf, RuntimeError> {
@@ -385,7 +510,7 @@ impl Runtime {
                 })?;
                 self.print_expression(&val)?;
             }
-            _ => println!(""),
+            _ => println!(),
         }
         Ok(())
     }
@@ -455,9 +580,9 @@ impl Runtime {
             Expression::Null => Ok(Expression::Null),
             Expression::Boolean(b) => Ok(Expression::Boolean(b)),
             Expression::StringLiteral(s) => Ok(Expression::StringLiteral(s)),
-            Expression::StringInterpolation { parts } => {
-                Ok(Expression::StringLiteral(self.render_interpolation(&parts)?))
-            }
+            Expression::StringInterpolation { parts } => Ok(Expression::StringLiteral(
+                self.render_interpolation(&parts)?,
+            )),
             Expression::Variable(name) => self
                 .variables
                 .get(&name)
@@ -497,7 +622,8 @@ impl Runtime {
                             let local_vars =
                                 self.bind_arguments(&params, &evaluated_args, &name)?;
 
-                            let module_funcs_with_exported = Rc::new(RefCell::new(module_functions));
+                            let module_funcs_with_exported =
+                                Rc::new(RefCell::new(module_functions));
                             let mut nested_runtime =
                                 self.create_nested_runtime(local_vars, module_funcs_with_exported);
                             let value = nested_runtime.execute(&body)?;
@@ -588,10 +714,11 @@ impl Runtime {
                 }
 
                 match self.evaluate_expression(*object)? {
-                    Expression::Object(properties) => properties
-                        .get(&property)
-                        .cloned()
-                        .ok_or_else(|| RuntimeError::new(format!("Property '{}' not found", property))),
+                    Expression::Object(properties) => {
+                        properties.get(&property).cloned().ok_or_else(|| {
+                            RuntimeError::new(format!("Property '{}' not found", property))
+                        })
+                    }
                     _ => Err(RuntimeError::new(
                         "Property access target must evaluate to an object",
                     )),
@@ -619,5 +746,4 @@ impl Runtime {
     pub fn has_function(&self, name: &str) -> bool {
         self.functions.borrow().contains_key(name)
     }
-
 }

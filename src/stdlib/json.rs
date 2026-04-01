@@ -1,13 +1,14 @@
+use super::NativeFunctionEntry;
 use crate::parser::ast::Expression;
 use serde_json::Value;
 
-pub fn json_functions() -> Vec<(&'static str, fn(Vec<Expression>) -> Option<Expression>)> {
+pub fn json_functions() -> Vec<NativeFunctionEntry> {
     vec![
         ("json_parse", |args: Vec<Expression>| {
             if args.len() == 1 {
                 if let Expression::StringLiteral(json) = &args[0] {
                     match serde_json::from_str::<Value>(json) {
-                        Ok(value) => value_to_expression(&value).map(|e| e),
+                        Ok(value) => value_to_expression(&value),
                         Err(_) => None,
                     }
                 } else {
@@ -22,7 +23,7 @@ pub fn json_functions() -> Vec<(&'static str, fn(Vec<Expression>) -> Option<Expr
                 match expression_to_value(&args[0]) {
                     Some(value) => serde_json::to_string(&value)
                         .ok()
-                        .map(|s| Expression::StringLiteral(s)),
+                        .map(Expression::StringLiteral),
                     None => None,
                 }
             } else {

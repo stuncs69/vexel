@@ -11,7 +11,12 @@ pub fn create_workspace(prefix: &str) -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .expect("system clock before unix epoch")
         .as_nanos();
-    dir.push(format!("vexel_test_{}_{}_{}", prefix, std::process::id(), nanos));
+    dir.push(format!(
+        "vexel_test_{}_{}_{}",
+        prefix,
+        std::process::id(),
+        nanos
+    ));
     fs::create_dir_all(&dir).expect("failed to create temp workspace");
     dir
 }

@@ -1,6 +1,8 @@
 mod common;
 
-use common::{create_workspace, run_vexel, stderr_text, write_workspace_file};
+use common::{
+    create_workspace, run_script, run_vexel, stderr_text, stdout_text, write_workspace_file,
+};
 
 #[test]
 fn rejects_non_vx_input_files() {
@@ -43,4 +45,55 @@ fn webcore_mode_without_routes_exits_successfully() {
     let output = run_vexel(&workspace, &["webcore", &arg]);
     assert!(output.status.success());
     assert!(stderr_text(&output).contains("No .vx endpoints found"));
+}
+
+#[test]
+fn test_blocks_do_not_run_without_test_flag() {
+    let workspace = create_workspace("tests_skipped");
+    write_workspace_file(
+        &workspace,
+        "main.vx",
+        r#"
+print "script"
+test "sample" start
+    print "test"
+end
+"#,
+    );
+
+    let output = run_script(&workspace, "main.vx");
+    assert!(output.status.success());
+    assert_eq!(stdout_text(&output), "script\n");
+}
+
+#[test]
+fn test_flag_runs_only_test_blocks() {
+    let workspace = create_workspace("tests_only");
+    let script = write_workspace_file(
+        &workspace,
+        "main.vx",
+        r#"
+print "script"
+
+function helper() start
+    return "from helper"
+end
+
+test "sample" start
+    print helper()
+end
+"#,
+    );
+    let arg = script.to_string_lossy().to_string();
+
+    let output = run_vexel(&workspace, &["--test", &arg]);
+    assert!(
+        output.status.success(),
+        "stderr was: {}",
+        stderr_text(&output)
+    );
+    assert_eq!(
+        stdout_text(&output),
+        "Running test: sample\nfrom helper\nTest 'sample' finished\n"
+    );
 }

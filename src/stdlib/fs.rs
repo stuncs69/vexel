@@ -1,15 +1,14 @@
+use super::NativeFunctionEntry;
 use crate::parser::ast::Expression;
 use std::fs;
 use std::io::Write;
 
-pub fn fs_functions() -> Vec<(&'static str, fn(Vec<Expression>) -> Option<Expression>)> {
+pub fn fs_functions() -> Vec<NativeFunctionEntry> {
     vec![
         ("read_file", |args: Vec<Expression>| {
             if args.len() == 1 {
                 if let Expression::StringLiteral(path) = &args[0] {
-                    fs::read_to_string(path)
-                        .ok()
-                        .map(|content| Expression::StringLiteral(content))
+                    fs::read_to_string(path).ok().map(Expression::StringLiteral)
                 } else {
                     None
                 }
@@ -116,11 +115,9 @@ pub fn fs_functions() -> Vec<(&'static str, fn(Vec<Expression>) -> Option<Expres
                     match fs::read_dir(path) {
                         Ok(entries) => {
                             let mut names = Vec::new();
-                            for entry in entries {
-                                if let Ok(dir_entry) = entry {
-                                    if let Some(name) = dir_entry.file_name().to_str() {
-                                        names.push(Expression::StringLiteral(name.to_string()));
-                                    }
+                            for dir_entry in entries.flatten() {
+                                if let Some(name) = dir_entry.file_name().to_str() {
+                                    names.push(Expression::StringLiteral(name.to_string()));
                                 }
                             }
                             Some(Expression::Array(names))
@@ -157,7 +154,12 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("system clock before unix epoch")
             .as_nanos();
-        path.push(format!("vexel_fs_test_{}_{}_{}", name, std::process::id(), nanos));
+        path.push(format!(
+            "vexel_fs_test_{}_{}_{}",
+            name,
+            std::process::id(),
+            nanos
+        ));
         path.to_string_lossy().to_string()
     }
 

@@ -21,6 +21,7 @@ pub(crate) enum Statement {
     If {
         condition: Expression,
         body: Vec<Statement>,
+        else_body: Option<Vec<Statement>>,
     },
     FunctionCall {
         name: String,
@@ -47,6 +48,13 @@ pub(crate) enum Statement {
     Test {
         name: String,
         body: Vec<Statement>,
+    },
+    Break,
+    Continue,
+    TryCatch {
+        try_body: Vec<Statement>,
+        error_var: String,
+        catch_body: Vec<Statement>,
     },
 }
 
