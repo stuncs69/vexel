@@ -38,13 +38,14 @@ fn reports_runtime_errors_with_non_zero_exit() {
 }
 
 #[test]
-fn webcore_mode_without_routes_exits_successfully() {
-    let workspace = create_workspace("webcore_empty");
-    let arg = workspace.to_string_lossy().to_string();
+fn reports_runtime_errors_for_invalid_bracket_property_access() {
+    let workspace = create_workspace("runtime_error_bracket_access");
+    let script = write_workspace_file(&workspace, "main.vx", "set x 123\nprint x[\"nope\"]\n");
+    let arg = script.to_string_lossy().to_string();
 
-    let output = run_vexel(&workspace, &["webcore", &arg]);
-    assert!(output.status.success());
-    assert!(stderr_text(&output).contains("No .vx endpoints found"));
+    let output = run_vexel(&workspace, &[&arg]);
+    assert!(!output.status.success());
+    assert!(stderr_text(&output).contains("Property access target must evaluate to an object"));
 }
 
 #[test]

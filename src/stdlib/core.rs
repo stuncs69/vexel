@@ -26,6 +26,7 @@ pub fn core_functions() -> Vec<NativeFunctionEntry> {
                     Expression::Boolean(_) => "boolean",
                     Expression::Array(_) => "array",
                     Expression::Object(_) => "object",
+                    Expression::Undefined => "undefined",
                     Expression::Null => "null",
                     Expression::FunctionCall { .. } => "function_call",
                     Expression::PropertyAccess { .. } => "property_access",

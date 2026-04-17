@@ -87,7 +87,6 @@ target/release/vexel --test script.vx
 - `test` blocks only run when the CLI is invoked with `--test`.
 - Runtime errors are fail-fast and return a non-zero exit code in CLI mode.
 - Relative imports are resolved from the importing file's directory.
-- In WebCore routes, optional `mime` controls the `Content-Type` header (default `text/plain`).
 
 ## Roadmap
 

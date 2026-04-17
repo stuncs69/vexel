@@ -147,6 +147,22 @@ pub fn string_functions() -> Vec<NativeFunctionEntry> {
                 None
             }
         }),
+        ("string_split", |args: Vec<Expression>| {
+            if args.len() == 2 {
+                match (&args[0], &args[1]) {
+                    (Expression::StringLiteral(s), Expression::StringLiteral(delimiter)) => {
+                        Some(Expression::Array(
+                            s.split(delimiter)
+                                .map(|part| Expression::StringLiteral(part.to_string()))
+                                .collect(),
+                        ))
+                    }
+                    _ => None,
+                }
+            } else {
+                None
+            }
+        }),
         ("string_starts_with", |args: Vec<Expression>| {
             if args.len() == 2 {
                 match (&args[0], &args[1]) {
@@ -196,6 +212,30 @@ mod tests {
         match result {
             Some(Expression::StringLiteral(value)) => assert_eq!(value, "é"),
             _ => panic!("Expected utf8 substring result"),
+        }
+    }
+
+    #[test]
+    fn string_split_returns_array_of_segments() {
+        let func = string_functions()
+            .into_iter()
+            .find(|(name, _)| *name == "string_split")
+            .map(|(_, f)| f)
+            .expect("missing string_split function");
+
+        let result = func(vec![
+            Expression::StringLiteral("main.test.vx".to_string()),
+            Expression::StringLiteral(".".to_string()),
+        ]);
+
+        match result {
+            Some(Expression::Array(parts)) => {
+                assert_eq!(parts.len(), 3);
+                assert!(matches!(&parts[0], Expression::StringLiteral(value) if value == "main"));
+                assert!(matches!(&parts[1], Expression::StringLiteral(value) if value == "test"));
+                assert!(matches!(&parts[2], Expression::StringLiteral(value) if value == "vx"));
+            }
+            _ => panic!("Expected string_split array result"),
         }
     }
 }

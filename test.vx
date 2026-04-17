@@ -1,0 +1,43 @@
+print "Vexel File Analyzer"
+
+# read current directory
+set files list_dir(".")
+
+set total 0
+set extensions {}
+
+for f in files start
+    # skip directories (simple heuristic: no dot = likely folder)
+    if string_contains(f, ".") == false start
+        continue
+    end
+
+    set total total + 1
+
+    # get extension
+    set parts string_split(f, ".")
+    set ext array_get(parts, array_length(parts) - 1)
+
+    # count extension occurrences
+    if object_has_property(extensions, ext) start
+        set current extensions.ext
+        set extensions.ext current + 1
+    else start
+        set extensions.ext 1
+    end
+end
+
+print "Total files: ${total}"
+print ""
+
+print "Files by extension:"
+
+set keys object_keys(extensions)
+print keys
+
+for k in keys start
+    print "${k}: ${extensions.k}"
+end
+
+print ""
+print "Done."

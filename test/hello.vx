@@ -1,7 +1,0 @@
-set path "/"
-set method "GET"
-
-export function request(a) start
-    set x "hello and welcome to my Vexel WebCore server"
-    return x
-end

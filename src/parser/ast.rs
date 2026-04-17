@@ -38,7 +38,7 @@ pub(crate) enum Statement {
     },
     PropertySet {
         object: Expression,
-        property: String,
+        property: Expression,
         value: Expression,
     },
     Import {
@@ -91,11 +91,12 @@ pub(crate) enum Expression {
         operator: String,
         expr: Box<Expression>,
     },
+    Undefined,
     Null,
     Array(Vec<Expression>),
     Object(HashMap<String, Expression>),
     PropertyAccess {
         object: Box<Expression>,
-        property: String,
+        property: Box<Expression>,
     },
 }

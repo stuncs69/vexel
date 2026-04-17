@@ -116,13 +116,10 @@ fn parse_function_call_statement(expr: &str) -> Statement {
 }
 
 fn parse_set_statement(first_line: &str, lines: &mut VecDeque<&str>) -> Statement {
-    let parts: Vec<&str> = first_line.splitn(3, ' ').collect();
-    if parts.len() < 3 {
+    let Some((target, value_part)) = split_set_target_and_value(first_line) else {
         panic!("Invalid set statement: {}", first_line);
-    }
-
-    let target = parts[1].to_string();
-    let mut value_str = parts[2].to_string();
+    };
+    let mut value_str = value_part.to_string();
 
     if value_str == "{" {
         let mut lines_to_parse = Vec::new();
@@ -171,25 +168,15 @@ fn parse_set_statement(first_line: &str, lines: &mut VecDeque<&str>) -> Statemen
 
     let value = parse_expression(&value_str);
 
-    if target.contains('.') {
-        let dot_pos = target.rfind('.').unwrap();
-        let object_path = &target[..dot_pos];
-        let property = target[dot_pos + 1..].to_string();
-
-        let object_expr = if object_path.contains('.') {
-            parse_property_access(object_path)
-        } else {
-            Expression::Variable(object_path.to_string())
-        };
-
-        return Statement::PropertySet {
-            object: object_expr,
-            property,
+    match parse_expression(target) {
+        Expression::Variable(var) => Statement::Set { var, value },
+        Expression::PropertyAccess { object, property } => Statement::PropertySet {
+            object: *object,
+            property: *property,
             value,
-        };
+        },
+        _ => panic!("Invalid set target: {}", target),
     }
-
-    Statement::Set { var: target, value }
 }
 
 fn parse_function(lines: &mut VecDeque<&str>, header: &str) -> Statement {
@@ -446,43 +433,7 @@ fn parse_primary(expr: &str) -> Expression {
         return parse_expression(expr);
     }
 
-    if let Ok(num) = expr.parse::<i32>() {
-        return Expression::Number(num);
-    }
-
-    if expr == "true" || expr == "false" {
-        return Expression::Boolean(expr == "true");
-    }
-
-    if expr == "null" {
-        return Expression::Null;
-    }
-
-    if expr.starts_with('"') && expr.ends_with('"') {
-        let content = &expr[1..expr.len() - 1];
-        if content.contains("${") {
-            return parse_interpolated_string(content);
-        }
-        return Expression::StringLiteral(content.to_string());
-    }
-
-    if expr.starts_with('[') && expr.ends_with(']') {
-        return parse_array(expr);
-    }
-
-    if expr.starts_with('{') && expr.ends_with('}') {
-        return parse_object(expr);
-    }
-
-    if expr.contains('(') && expr.contains(')') {
-        return parse_function_call(expr);
-    }
-
-    if expr.contains('.') {
-        return parse_property_access(expr);
-    }
-
-    Expression::Variable(expr.to_string())
+    parse_postfix_expression(expr)
 }
 
 fn parse_object(expr: &str) -> Expression {
@@ -511,24 +462,6 @@ fn parse_object(expr: &str) -> Expression {
     }
 
     Expression::Object(properties)
-}
-
-fn parse_property_access(expr: &str) -> Expression {
-    let parts: Vec<&str> = expr.split('.').collect();
-    if parts.len() < 2 {
-        panic!("Invalid property access: {}", expr);
-    }
-
-    let mut object_expr = Expression::Variable(parts[0].to_string());
-
-    for property in &parts[1..] {
-        object_expr = Expression::PropertyAccess {
-            object: Box::new(object_expr),
-            property: property.to_string(),
-        };
-    }
-
-    object_expr
 }
 
 fn parse_for_loop(lines: &mut VecDeque<&str>, header: &str) -> Statement {
@@ -589,6 +522,118 @@ fn parse_function_call(expr: &str) -> Expression {
     Expression::FunctionCall { name, args }
 }
 
+fn parse_postfix_expression(expr: &str) -> Expression {
+    let (mut current, mut index) = parse_base_expression(expr);
+
+    while index < expr.len() {
+        index = skip_whitespace(expr, index);
+        if index >= expr.len() {
+            break;
+        }
+
+        let suffix = &expr[index..];
+        if suffix.starts_with('.') {
+            index += 1;
+            index = skip_whitespace(expr, index);
+            let property_start = index;
+            index += consume_identifier(&expr[index..]);
+            if property_start == index {
+                panic!("Invalid property access: {}", expr);
+            }
+
+            current = Expression::PropertyAccess {
+                object: Box::new(current),
+                property: Box::new(Expression::StringLiteral(
+                    expr[property_start..index].to_string(),
+                )),
+            };
+            continue;
+        }
+
+        if suffix.starts_with('[') {
+            let end = find_matching_delimiter_end(expr, index, '[', ']')
+                .unwrap_or_else(|| panic!("Invalid bracket access: {}", expr));
+            let property_expr = parse_expression(&expr[index + 1..end - 1]);
+            current = Expression::PropertyAccess {
+                object: Box::new(current),
+                property: Box::new(property_expr),
+            };
+            index = end;
+            continue;
+        }
+
+        panic!("Invalid expression: {}", expr);
+    }
+
+    current
+}
+
+fn parse_base_expression(expr: &str) -> (Expression, usize) {
+    let expr = expr.trim();
+    if expr.is_empty() {
+        panic!("Invalid expression: {}", expr);
+    }
+
+    let first = expr.chars().next().unwrap();
+    match first {
+        '"' => {
+            let end = find_string_end(expr).unwrap_or_else(|| panic!("Unterminated string: {}", expr));
+            let content = &expr[1..end - 1];
+            let expression = if content.contains("${") {
+                parse_interpolated_string(content)
+            } else {
+                Expression::StringLiteral(content.to_string())
+            };
+            (expression, end)
+        }
+        '[' => {
+            let end = find_matching_delimiter_end(expr, 0, '[', ']')
+                .unwrap_or_else(|| panic!("Invalid array syntax: {}", expr));
+            (parse_array(&expr[..end]), end)
+        }
+        '{' => {
+            let end = find_matching_delimiter_end(expr, 0, '{', '}')
+                .unwrap_or_else(|| panic!("Invalid object syntax: {}", expr));
+            (parse_object(&expr[..end]), end)
+        }
+        '(' => {
+            let end = find_matching_delimiter_end(expr, 0, '(', ')')
+                .unwrap_or_else(|| panic!("Invalid grouping expression: {}", expr));
+            (parse_expression(&expr[1..end - 1]), end)
+        }
+        _ if first.is_ascii_digit() => {
+            let length = consume_digits(expr);
+            let number = expr[..length]
+                .parse::<i32>()
+                .unwrap_or_else(|_| panic!("Invalid number literal: {}", expr));
+            (Expression::Number(number), length)
+        }
+        _ => {
+            let first_identifier_len = consume_identifier(expr);
+            if first_identifier_len == 0 {
+                panic!("Invalid expression: {}", expr);
+            }
+
+            let dotted_head_len = consume_dotted_identifier_chain(expr);
+            let dotted_head_end = skip_whitespace(expr, dotted_head_len);
+            if dotted_head_end < expr.len() && expr[dotted_head_end..].starts_with('(') {
+                let call_end = find_matching_delimiter_end(expr, dotted_head_end, '(', ')')
+                    .unwrap_or_else(|| panic!("Invalid function call: {}", expr));
+                return (parse_function_call(&expr[..call_end]), call_end);
+            }
+
+            let identifier = &expr[..first_identifier_len];
+            let expression = match identifier {
+                "true" => Expression::Boolean(true),
+                "false" => Expression::Boolean(false),
+                "null" => Expression::Null,
+                _ => Expression::Variable(identifier.to_string()),
+            };
+            (expression, first_identifier_len)
+        }
+    }
+}
+
 fn parse_test_block(lines: &mut VecDeque<&str>, header: &str) -> Statement {
     let header = strip_required_start_suffix(header, "test");
     let name_start = header.find('"').unwrap_or(0);
@@ -605,6 +650,49 @@ fn parse_test_block(lines: &mut VecDeque<&str>, header: &str) -> Statement {
     let body = parse_block(lines, true);
 
     Statement::Test { name, body }
+}
+
+fn split_set_target_and_value(line: &str) -> Option<(&str, &str)> {
+    let remainder = line.strip_prefix("set ")?;
+    let mut depth_curly = 0;
+    let mut depth_square = 0;
+    let mut depth_paren = 0;
+    let mut in_string = false;
+    let mut escaped = false;
+
+    for (idx, ch) in remainder.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+
+        match ch {
+            '\\' if in_string => escaped = true,
+            '"' => in_string = !in_string,
+            '{' if !in_string => depth_curly += 1,
+            '}' if !in_string => depth_curly -= 1,
+            '[' if !in_string => depth_square += 1,
+            ']' if !in_string => depth_square -= 1,
+            '(' if !in_string => depth_paren += 1,
+            ')' if !in_string => depth_paren -= 1,
+            c if c.is_whitespace()
+                && !in_string
+                && depth_curly == 0
+                && depth_square == 0
+                && depth_paren == 0 =>
+            {
+                let target = remainder[..idx].trim();
+                let value = remainder[idx..].trim();
+                if target.is_empty() || value.is_empty() {
+                    return None;
+                }
+                return Some((target, value));
+            }
+            _ => {}
+        }
+    }
+
+    None
 }
 
 fn extract_between<'a>(s: &'a str, start: &str, end: &str) -> &'a str {
@@ -788,8 +876,118 @@ fn strip_grouping_parentheses(mut expr: &str) -> &str {
     }
 }
 
+fn skip_whitespace(s: &str, mut index: usize) -> usize {
+    while let Some(ch) = s[index..].chars().next() {
+        if !ch.is_whitespace() {
+            break;
+        }
+        index += ch.len_utf8();
+    }
+    index
+}
+
+fn consume_digits(s: &str) -> usize {
+    let mut length = 0;
+    for ch in s.chars() {
+        if ch.is_ascii_digit() {
+            length += ch.len_utf8();
+        } else {
+            break;
+        }
+    }
+    length
+}
+
+fn consume_identifier(s: &str) -> usize {
+    let mut length = 0;
+    for (idx, ch) in s.char_indices() {
+        let valid = if idx == 0 {
+            ch == '_' || ch.is_alphabetic()
+        } else {
+            ch == '_' || ch.is_alphanumeric()
+        };
+        if !valid {
+            break;
+        }
+        length = idx + ch.len_utf8();
+    }
+    length
+}
+
+fn consume_dotted_identifier_chain(s: &str) -> usize {
+    let mut index = consume_identifier(s);
+    if index == 0 {
+        return 0;
+    }
+
+    loop {
+        let after_dot = skip_whitespace(s, index);
+        if after_dot >= s.len() || !s[after_dot..].starts_with('.') {
+            return index;
+        }
+
+        let property_start = skip_whitespace(s, after_dot + 1);
+        let property_len = consume_identifier(&s[property_start..]);
+        if property_len == 0 {
+            return index;
+        }
+
+        index = property_start + property_len;
+    }
+}
+
+fn find_string_end(s: &str) -> Option<usize> {
+    let mut escaped = false;
+    for (idx, ch) in s.char_indices().skip(1) {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+
+        match ch {
+            '\\' => escaped = true,
+            '"' => return Some(idx + 1),
+            _ => {}
+        }
+    }
+    None
+}
+
+fn find_matching_delimiter_end(
+    s: &str,
+    start_idx: usize,
+    open: char,
+    close: char,
+) -> Option<usize> {
+    let mut depth = 0;
+    let mut in_string = false;
+    let mut escaped = false;
+
+    for (offset, ch) in s[start_idx..].char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+
+        match ch {
+            '\\' if in_string => escaped = true,
+            '"' => in_string = !in_string,
+            current if current == open && !in_string => depth += 1,
+            current if current == close && !in_string => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(start_idx + offset + ch.len_utf8());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    None
+}
+
 fn should_parse_as_unary_minus(expr: &str) -> bool {
-    expr.starts_with('-') && expr.parse::<i32>().is_err()
+    expr.starts_with('-') && expr.len() > 1
 }
 
 fn find_top_level_binary_operator<'a>(
@@ -1092,6 +1290,78 @@ mod tests {
                 ..
             } if error_var == "err" && !catch_body.is_empty()
         ));
+    }
+
+    #[test]
+    fn parse_program_handles_mixed_bracket_and_dot_property_access() {
+        let statements = parse_program("set value user.profile[key]\n");
+        assert_eq!(statements.len(), 1);
+
+        match &statements[0] {
+            Statement::Set { var, value } => {
+                assert_eq!(var, "value");
+                match value {
+                    Expression::PropertyAccess { object, property } => {
+                        assert!(matches!(
+                            property.as_ref(),
+                            Expression::Variable(name) if name == "key"
+                        ));
+                        match object.as_ref() {
+                            Expression::PropertyAccess { object, property } => {
+                                assert!(matches!(
+                                    property.as_ref(),
+                                    Expression::StringLiteral(name) if name == "profile"
+                                ));
+                                assert!(matches!(
+                                    object.as_ref(),
+                                    Expression::Variable(name) if name == "user"
+                                ));
+                            }
+                            _ => panic!("Expected nested property access"),
+                        }
+                    }
+                    _ => panic!("Expected property access expression"),
+                }
+            }
+            _ => panic!("Expected set statement"),
+        }
+    }
+
+    #[test]
+    fn parse_program_handles_bracket_property_assignment() {
+        let statements = parse_program("set user[\"profile\"][key] \"gold\"\n");
+        assert_eq!(statements.len(), 1);
+
+        match &statements[0] {
+            Statement::PropertySet {
+                object,
+                property,
+                value,
+            } => {
+                assert!(matches!(
+                    property,
+                    Expression::Variable(name) if name == "key"
+                ));
+                assert!(matches!(
+                    value,
+                    Expression::StringLiteral(text) if text == "gold"
+                ));
+                match object {
+                    Expression::PropertyAccess { object, property } => {
+                        assert!(matches!(
+                            property.as_ref(),
+                            Expression::StringLiteral(text) if text == "profile"
+                        ));
+                        assert!(matches!(
+                            object.as_ref(),
+                            Expression::Variable(name) if name == "user"
+                        ));
+                    }
+                    _ => panic!("Expected property path"),
+                }
+            }
+            _ => panic!("Expected property set statement"),
+        }
     }
 
     #[test]

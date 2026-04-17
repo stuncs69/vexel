@@ -22,12 +22,6 @@ Run REPL:
 cargo run
 ```
 
-Run WebCore mode:
-
-```sh
-cargo run -- webcore ./routes_folder
-```
-
 ## 2. Syntax Basics
 
 - Statements are line-based.
@@ -52,6 +46,7 @@ Current runtime values:
 - `string`
 - `array`
 - `object`
+- `undefined`
 - `null`
 
 `null` is parsed as a literal token.
@@ -72,6 +67,7 @@ set obj {a: 1, b: true}
 ```vx
 set user {name: "A"}
 set user.profile.rank "gold"
+set user["profile"]["rank"] "gold"
 ```
 
 ### 4.3 Printing
@@ -184,6 +180,7 @@ Supported expression forms:
 - arrays: `[1,2,3]`
 - objects: `{a: 1, b: "x"}`
 - property access: `obj.field.nested`
+- dynamic property access: `obj[key]`, `obj["field"]`, `user.profile[key]`
 - interpolation: `"hello ${name}"`
 
 ### String interpolation
@@ -218,6 +215,12 @@ Vexel uses fail-fast execution:
 Native built-ins return `None` on invalid arguments; runtime treats this as an error with a message like:
 
 - `Native function 'name' failed for provided arguments`
+
+Property access behavior:
+
+- missing object properties evaluate to `undefined`
+- array out-of-bounds still evaluate to `null`
+- property access on non-objects is a runtime error
 
 ## 7. Imports and Path Resolution
 
@@ -325,30 +328,7 @@ Notes:
 - debug helpers return no value.
 - `assert_equal(a, b)` currently prints a failure message but does not stop execution.
 
-## 9. WebCore
-
-A `.vx` file can define an HTTP route using top-level variables:
-
-```vx
-set path "/users/{id}"
-set method "GET"
-set mime "application/json"
-
-function request(id) start
-    return json_stringify({id: id})
-end
-```
-
-WebCore behavior:
-
-- loads all `.vx` files from a folder.
-- default route path is `/<filename_without_ext>` if `path` is absent.
-- default method is `GET` if `method` is absent.
-- default MIME type is `text/plain` if `mime` is absent.
-- `mime` sets the HTTP `Content-Type` response header for that route.
-- current path templating supports one captured segment pattern per route usage.
-
-## 10. Current Limitations / Gotchas
+## 9. Current Limitations / Gotchas
 
 - No logical operators like `&&` / `||`.
 - Expressions are mostly expected on one line.
@@ -358,7 +338,7 @@ WebCore behavior:
 - Function argument counts must match exactly.
 - `test` blocks do not inherit outer variables.
 
-## 11. Minimal Example
+## 10. Minimal Example
 
 ```vx
 import m from "./module.vx"

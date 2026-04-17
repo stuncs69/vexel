@@ -101,6 +101,7 @@ fn object_to_string_impl(expr: &Expression) -> String {
         Expression::Number(n) => n.to_string(),
         Expression::Boolean(b) => b.to_string(),
         Expression::StringLiteral(s) => format!("\"{}\"", s),
+        Expression::Undefined => "undefined".to_string(),
         Expression::Null => "null".to_string(),
         Expression::Array(arr) => {
             let elements: Vec<String> = arr.iter().map(object_to_string_impl).collect();

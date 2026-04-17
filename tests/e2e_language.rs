@@ -72,6 +72,45 @@ print type_of(obj.nested.inner)
 }
 
 #[test]
+fn executes_dynamic_object_property_access_and_assignment() {
+    let workspace = create_workspace("dynamic_object_access");
+    write_workspace_file(
+        &workspace,
+        "main.vx",
+        r#"
+set obj {a: 1, b: 2}
+set key "a"
+print obj[key]
+
+set counts {}
+set count_key "count"
+set counts[count_key] 42
+print counts.count
+
+set user {profile: {rank: "gold"}}
+set rank_key "rank"
+print user.profile[rank_key]
+
+set missing {}
+print missing["missing"]
+
+set chained {}
+set chained["profile"] {}
+set chained["profile"]["rank"] "gold"
+print chained.profile.rank
+"#,
+    );
+
+    let output = run_script(&workspace, "main.vx");
+    assert!(
+        output.status.success(),
+        "script failed: {}",
+        stderr_text(&output)
+    );
+    assert_stdout_lines(&output, &["1", "42", "gold", "undefined", "gold"]);
+}
+
+#[test]
 fn executes_string_and_interpolation_features() {
     let workspace = create_workspace("strings");
     write_workspace_file(
@@ -87,6 +126,9 @@ set src "éx"
 print string_substring(src,0,1)
 print string_from_number(42)
 print number_from_string("42")
+set parts string_split("archive.tar.gz",".")
+print array_length(parts)
+print array_get(parts,2)
 "#,
     );
 
@@ -98,7 +140,16 @@ print number_from_string("42")
     );
     assert_stdout_lines(
         &output,
-        &["Hello Tim, 5!", "Cost: \\$5", "boolean", "é", "42", "42"],
+        &[
+            "Hello Tim, 5!",
+            "Cost: \\$5",
+            "boolean",
+            "é",
+            "42",
+            "42",
+            "3",
+            "gz",
+        ],
     );
 }
 

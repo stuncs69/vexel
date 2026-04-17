@@ -163,68 +163,7 @@ impl Runtime {
                     value,
                 } => {
                     let evaluated_value = self.evaluate_expression(value.clone())?;
-
-                    fn update_property_in_expr(
-                        expr: &mut Expression,
-                        path: &[String],
-                        value: Expression,
-                    ) -> bool {
-                        if path.is_empty() {
-                            return false;
-                        }
-
-                        if path.len() == 1 {
-                            if let Expression::Object(properties) = expr {
-                                properties.insert(path[0].clone(), value);
-                                return true;
-                            }
-                            return false;
-                        }
-
-                        if let Expression::Object(properties) = expr {
-                            if let Some(val) = properties.get_mut(&path[0]) {
-                                return update_property_in_expr(val, &path[1..], value);
-                            }
-                            let mut new_obj = Expression::Object(std::collections::HashMap::new());
-                            update_property_in_expr(&mut new_obj, &path[1..], value);
-                            properties.insert(path[0].clone(), new_obj);
-                            return true;
-                        }
-                        false
-                    }
-
-                    let mut path = Vec::new();
-                    let mut current = object;
-                    let root_var = loop {
-                        match current {
-                            Expression::Variable(name) => {
-                                break name.clone();
-                            }
-                            Expression::PropertyAccess { object, property } => {
-                                path.push(property.clone());
-                                current = object.as_ref();
-                            }
-                            _ => {
-                                return Err(RuntimeError::new(
-                                    "Property assignment requires a variable/object path",
-                                ));
-                            }
-                        }
-                    };
-
-                    path.reverse();
-                    path.push(property.clone());
-
-                    if let Some(mut root_value) = self.variables.remove(&root_var) {
-                        if !update_property_in_expr(&mut root_value, &path, evaluated_value) {
-                            return Err(RuntimeError::new("Failed to set nested property"));
-                        }
-                        self.variables.insert(root_var, root_value);
-                    } else {
-                        let mut new_value = Expression::Object(std::collections::HashMap::new());
-                        update_property_in_expr(&mut new_value, &path, evaluated_value);
-                        self.variables.insert(root_var, new_value);
-                    }
+                    self.assign_property(object.clone(), property.clone(), evaluated_value)?;
                 }
                 Statement::ForLoop {
                     variable,
@@ -478,6 +417,7 @@ impl Runtime {
             Expression::StringInterpolation { parts } => {
                 println!("{}", self.render_interpolation(parts)?)
             }
+            Expression::Undefined => println!("undefined"),
             Expression::Null => println!("null"),
             Expression::Array(arr) => {
                 let elements: Vec<String> = arr
@@ -527,6 +467,7 @@ impl Runtime {
             Expression::StringInterpolation { parts } => {
                 Ok(format!("\"{}\"", self.render_interpolation(parts)?))
             }
+            Expression::Undefined => Ok("undefined".to_string()),
             Expression::Null => Ok("null".to_string()),
             Expression::Array(arr) => {
                 let elements: Vec<String> = arr
@@ -585,6 +526,7 @@ impl Runtime {
                 Ok(Expression::Object(evaluated_properties))
             }
             Expression::Number(n) => Ok(Expression::Number(n)),
+            Expression::Undefined => Ok(Expression::Undefined),
             Expression::Null => Ok(Expression::Null),
             Expression::Boolean(b) => Ok(Expression::Boolean(b)),
             Expression::StringLiteral(s) => Ok(Expression::StringLiteral(s)),
@@ -755,34 +697,146 @@ impl Runtime {
                 }
             }
             Expression::PropertyAccess { object, property } => {
-                if let Expression::Variable(module_name) = object.as_ref() {
-                    if let Some(module_functions) = self.modules.borrow().get(module_name) {
-                        if let Some((_, _, exported)) = module_functions.get(&property) {
-                            if !exported {
-                                return Err(RuntimeError::new(format!(
-                                    "Function '{}.{}' is not exported",
-                                    module_name, property
-                                )));
-                            }
-                            return Ok(Expression::Variable(format!(
-                                "{}::{}",
-                                module_name, property
-                            )));
-                        }
-                    }
-                }
+                self.resolve_property_access(*object, *property)
+            }
+        }
+    }
 
-                match self.evaluate_expression(*object)? {
-                    Expression::Object(properties) => {
-                        properties.get(&property).cloned().ok_or_else(|| {
-                            RuntimeError::new(format!("Property '{}' not found", property))
-                        })
-                    }
-                    _ => Err(RuntimeError::new(
-                        "Property access target must evaluate to an object",
-                    )),
+    fn assign_property(
+        &mut self,
+        object: Expression,
+        property: Expression,
+        value: Expression,
+    ) -> Result<(), RuntimeError> {
+        let (root_var, property_path) = self.collect_assignment_path(object, property)?;
+
+        if let Some(mut root_value) = self.variables.remove(&root_var) {
+            self.assign_property_path(&mut root_value, &property_path, value)?;
+            self.variables.insert(root_var, root_value);
+        } else {
+            let mut root_value = Expression::Object(std::collections::HashMap::new());
+            self.assign_property_path(&mut root_value, &property_path, value)?;
+            self.variables.insert(root_var, root_value);
+        }
+
+        Ok(())
+    }
+
+    fn collect_assignment_path(
+        &self,
+        object: Expression,
+        property: Expression,
+    ) -> Result<(String, Vec<String>), RuntimeError> {
+        let mut segments = vec![self.evaluate_property_key(property)?];
+        let mut current = object;
+
+        loop {
+            match current {
+                Expression::Variable(name) => {
+                    segments.reverse();
+                    return Ok((name, segments));
+                }
+                Expression::PropertyAccess { object, property } => {
+                    segments.push(self.evaluate_property_key(*property)?);
+                    current = *object;
+                }
+                _ => {
+                    return Err(RuntimeError::new(
+                        "Property assignment requires a variable/object path",
+                    ));
                 }
             }
+        }
+    }
+
+    fn assign_property_path(
+        &self,
+        expr: &mut Expression,
+        path: &[String],
+        value: Expression,
+    ) -> Result<(), RuntimeError> {
+        if path.is_empty() {
+            return Err(RuntimeError::new("Property assignment requires at least one key"));
+        }
+
+        let Expression::Object(properties) = expr else {
+            return Err(RuntimeError::new(
+                "Property assignment target must evaluate to an object",
+            ));
+        };
+
+        if path.len() == 1 {
+            properties.insert(path[0].clone(), value);
+            return Ok(());
+        }
+
+        let entry = properties
+            .entry(path[0].clone())
+            .or_insert_with(|| Expression::Object(std::collections::HashMap::new()));
+
+        if !matches!(entry, Expression::Object(_)) {
+            return Err(RuntimeError::new(format!(
+                "Cannot assign nested property through non-object value '{}'",
+                path[0]
+            )));
+        }
+
+        self.assign_property_path(entry, &path[1..], value)
+    }
+
+    fn resolve_property_access(
+        &self,
+        object: Expression,
+        property: Expression,
+    ) -> Result<Expression, RuntimeError> {
+        let property_name = self.evaluate_property_key(property)?;
+
+        if let Expression::Variable(module_name) = &object {
+            if let Some(module_functions) = self.modules.borrow().get(module_name) {
+                if let Some((_, _, exported)) = module_functions.get(&property_name) {
+                    if !exported {
+                        return Err(RuntimeError::new(format!(
+                            "Function '{}.{}' is not exported",
+                            module_name, property_name
+                        )));
+                    }
+                    return Ok(Expression::Variable(format!(
+                        "{}::{}",
+                        module_name, property_name
+                    )));
+                }
+            }
+        }
+
+        match self.evaluate_expression(object)? {
+            Expression::Object(properties) => Ok(properties
+                .get(&property_name)
+                .cloned()
+                .unwrap_or(Expression::Undefined)),
+            _ => Err(RuntimeError::new(
+                "Property access target must evaluate to an object",
+            )),
+        }
+    }
+
+    fn evaluate_property_key(&self, property: Expression) -> Result<String, RuntimeError> {
+        match self.evaluate_expression(property)? {
+            Expression::StringLiteral(value) => Ok(value),
+            Expression::Undefined => Err(RuntimeError::new(
+                "Property key expression evaluated to undefined",
+            )),
+            Expression::Null => Err(RuntimeError::new(
+                "Property key expression must evaluate to a string, found null",
+            )),
+            Expression::Number(_) | Expression::Boolean(_) | Expression::Array(_) | Expression::Object(_) => {
+                Err(RuntimeError::new(
+                    "Property key expression must evaluate to a string",
+                ))
+            }
+            other => Err(RuntimeError::new(format!(
+                "Property key expression must evaluate to a string, found {}",
+                self.expression_to_string(&other)?
+            ))),
         }
     }
 

@@ -130,6 +130,7 @@ fn array_to_string(args: Vec<Expression>) -> Option<Expression> {
                 Expression::Number(n) => n.to_string(),
                 Expression::Boolean(b) => b.to_string(),
                 Expression::StringLiteral(s) => s.to_string(),
+                Expression::Undefined => "undefined".to_string(),
                 Expression::PropertyAccess { .. } => String::new(),
                 Expression::StringInterpolation { .. } => "<string interpolation>".to_string(),
                 Expression::Object(_) => String::new(),
