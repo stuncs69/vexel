@@ -45,6 +45,12 @@ enum FlowSignal {
     Continue,
 }
 
+#[derive(Debug, Clone)]
+enum AccessKey {
+    String(String),
+    Number(i32),
+}
+
 pub struct Runtime {
     variables: HashMap<String, Expression>,
     functions: SharedFunctionTable,
@@ -714,6 +720,11 @@ impl Runtime {
             self.assign_property_path(&mut root_value, &property_path, value)?;
             self.variables.insert(root_var, root_value);
         } else {
+            if matches!(property_path.first(), Some(AccessKey::Number(_))) {
+                return Err(RuntimeError::new(
+                    "Array assignment target must already exist",
+                ));
+            }
             let mut root_value = Expression::Object(std::collections::HashMap::new());
             self.assign_property_path(&mut root_value, &property_path, value)?;
             self.variables.insert(root_var, root_value);
@@ -726,8 +737,8 @@ impl Runtime {
         &self,
         object: Expression,
         property: Expression,
-    ) -> Result<(String, Vec<String>), RuntimeError> {
-        let mut segments = vec![self.evaluate_property_key(property)?];
+    ) -> Result<(String, Vec<AccessKey>), RuntimeError> {
+        let mut segments = vec![self.evaluate_access_key(property)?];
         let mut current = object;
 
         loop {
@@ -737,7 +748,7 @@ impl Runtime {
                     return Ok((name, segments));
                 }
                 Expression::PropertyAccess { object, property } => {
-                    segments.push(self.evaluate_property_key(*property)?);
+                    segments.push(self.evaluate_access_key(*property)?);
                     current = *object;
                 }
                 _ => {
@@ -752,36 +763,61 @@ impl Runtime {
     fn assign_property_path(
         &self,
         expr: &mut Expression,
-        path: &[String],
+        path: &[AccessKey],
         value: Expression,
     ) -> Result<(), RuntimeError> {
         if path.is_empty() {
-            return Err(RuntimeError::new("Property assignment requires at least one key"));
-        }
-
-        let Expression::Object(properties) = expr else {
             return Err(RuntimeError::new(
-                "Property assignment target must evaluate to an object",
+                "Property assignment requires at least one key",
             ));
-        };
-
-        if path.len() == 1 {
-            properties.insert(path[0].clone(), value);
-            return Ok(());
         }
 
-        let entry = properties
-            .entry(path[0].clone())
-            .or_insert_with(|| Expression::Object(std::collections::HashMap::new()));
+        match (&path[0], expr) {
+            (AccessKey::String(key), Expression::Object(properties)) => {
+                if path.len() == 1 {
+                    properties.insert(key.clone(), value);
+                    return Ok(());
+                }
 
-        if !matches!(entry, Expression::Object(_)) {
-            return Err(RuntimeError::new(format!(
-                "Cannot assign nested property through non-object value '{}'",
-                path[0]
-            )));
+                let entry = properties
+                    .entry(key.clone())
+                    .or_insert_with(|| Expression::Object(std::collections::HashMap::new()));
+
+                if !matches!(entry, Expression::Object(_) | Expression::Array(_)) {
+                    return Err(RuntimeError::new(format!(
+                        "Cannot assign nested property through non-container value '{}'",
+                        key
+                    )));
+                }
+
+                self.assign_property_path(entry, &path[1..], value)
+            }
+            (AccessKey::Number(index), Expression::Array(elements)) => {
+                let index = Self::array_index(*index)?;
+                if index >= elements.len() {
+                    return Err(RuntimeError::new(format!(
+                        "Array assignment index {} is out of bounds",
+                        index
+                    )));
+                }
+
+                if path.len() == 1 {
+                    elements[index] = value;
+                    return Ok(());
+                }
+
+                self.assign_property_path(&mut elements[index], &path[1..], value)
+            }
+            (AccessKey::String(_), Expression::Array(_)) => Err(RuntimeError::new(
+                "Array assignment index must evaluate to a number",
+            )),
+            (AccessKey::Number(_), Expression::Object(_)) => Err(RuntimeError::new(
+                "Object property key must evaluate to a string",
+            )),
+            (_, _) => Err(RuntimeError::new(
+                "Property assignment target must evaluate to an object or array",
+            )),
         }
-
-        self.assign_property_path(entry, &path[1..], value)
     }
 
     fn resolve_property_access(
@@ -789,55 +825,82 @@ impl Runtime {
         object: Expression,
         property: Expression,
     ) -> Result<Expression, RuntimeError> {
-        let property_name = self.evaluate_property_key(property)?;
+        let property_key = self.evaluate_access_key(property)?;
 
         if let Expression::Variable(module_name) = &object {
-            if let Some(module_functions) = self.modules.borrow().get(module_name) {
-                if let Some((_, _, exported)) = module_functions.get(&property_name) {
-                    if !exported {
-                        return Err(RuntimeError::new(format!(
-                            "Function '{}.{}' is not exported",
+            if let AccessKey::String(property_name) = &property_key {
+                if let Some(module_functions) = self.modules.borrow().get(module_name) {
+                    if let Some((_, _, exported)) = module_functions.get(property_name) {
+                        if !exported {
+                            return Err(RuntimeError::new(format!(
+                                "Function '{}.{}' is not exported",
+                                module_name, property_name
+                            )));
+                        }
+                        return Ok(Expression::Variable(format!(
+                            "{}::{}",
                             module_name, property_name
                         )));
                     }
-                    return Ok(Expression::Variable(format!(
-                        "{}::{}",
-                        module_name, property_name
-                    )));
                 }
             }
         }
 
         match self.evaluate_expression(object)? {
-            Expression::Object(properties) => Ok(properties
-                .get(&property_name)
-                .cloned()
-                .unwrap_or(Expression::Undefined)),
+            Expression::Object(properties) => match property_key {
+                AccessKey::String(property_name) => Ok(properties
+                    .get(&property_name)
+                    .cloned()
+                    .unwrap_or(Expression::Undefined)),
+                AccessKey::Number(_) => Err(RuntimeError::new(
+                    "Object property key must evaluate to a string",
+                )),
+            },
+            Expression::Array(elements) => match property_key {
+                AccessKey::Number(index) => {
+                    if index < 0 {
+                        return Ok(Expression::Undefined);
+                    }
+                    Ok(elements
+                        .get(index as usize)
+                        .cloned()
+                        .unwrap_or(Expression::Undefined))
+                }
+                AccessKey::String(_) => {
+                    Err(RuntimeError::new("Array index must evaluate to a number"))
+                }
+            },
             _ => Err(RuntimeError::new(
-                "Property access target must evaluate to an object",
+                "Property access target must evaluate to an object or array",
             )),
         }
     }
 
-    fn evaluate_property_key(&self, property: Expression) -> Result<String, RuntimeError> {
+    fn evaluate_access_key(&self, property: Expression) -> Result<AccessKey, RuntimeError> {
         match self.evaluate_expression(property)? {
-            Expression::StringLiteral(value) => Ok(value),
+            Expression::StringLiteral(value) => Ok(AccessKey::String(value)),
+            Expression::Number(value) => Ok(AccessKey::Number(value)),
             Expression::Undefined => Err(RuntimeError::new(
                 "Property key expression evaluated to undefined",
             )),
             Expression::Null => Err(RuntimeError::new(
-                "Property key expression must evaluate to a string, found null",
+                "Property key expression must evaluate to a string or number, found null",
             )),
-            Expression::Number(_) | Expression::Boolean(_) | Expression::Array(_) | Expression::Object(_) => {
-                Err(RuntimeError::new(
-                    "Property key expression must evaluate to a string",
-                ))
-            }
+            Expression::Boolean(_) | Expression::Array(_) | Expression::Object(_) => Err(
+                RuntimeError::new("Property key expression must evaluate to a string or number"),
+            ),
             other => Err(RuntimeError::new(format!(
-                "Property key expression must evaluate to a string, found {}",
+                "Property key expression must evaluate to a string or number, found {}",
                 self.expression_to_string(&other)?
             ))),
         }
+    }
+
+    fn array_index(index: i32) -> Result<usize, RuntimeError> {
+        if index < 0 {
+            return Err(RuntimeError::new("Array index must be non-negative"));
+        }
+        Ok(index as usize)
     }
 
     pub fn call_function(

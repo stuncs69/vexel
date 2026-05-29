@@ -23,7 +23,19 @@ fn reports_parse_errors_with_non_zero_exit() {
 
     let output = run_vexel(&workspace, &[&arg]);
     assert!(!output.status.success());
-    assert!(stderr_text(&output).contains("Invalid set statement: set"));
+    let stderr = stderr_text(&output);
+    assert!(stderr.contains("line 1: Invalid set statement: set"));
+}
+
+#[test]
+fn rejects_unknown_statements_with_line_number() {
+    let workspace = create_workspace("unknown_statement");
+    let script = write_workspace_file(&workspace, "main.vx", "print 1\nnonsense statement\n");
+    let arg = script.to_string_lossy().to_string();
+
+    let output = run_vexel(&workspace, &[&arg]);
+    assert!(!output.status.success());
+    assert!(stderr_text(&output).contains("line 2: Unknown statement: nonsense statement"));
 }
 
 #[test]
@@ -45,7 +57,9 @@ fn reports_runtime_errors_for_invalid_bracket_property_access() {
 
     let output = run_vexel(&workspace, &[&arg]);
     assert!(!output.status.success());
-    assert!(stderr_text(&output).contains("Property access target must evaluate to an object"));
+    assert!(
+        stderr_text(&output).contains("Property access target must evaluate to an object or array")
+    );
 }
 
 #[test]

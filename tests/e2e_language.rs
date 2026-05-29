@@ -51,8 +51,11 @@ set arr [1,2]
 set arr array_push(arr,3,4)
 print array_length(arr)
 print array_get(arr,2)
+print arr[2]
 set arr array_set(arr,1,9)
+set arr[0] 8
 print array_join(arr,",")
+print arr[8]
 set obj {a: 1}
 set obj.b 2
 set obj.nested.inner "x"
@@ -68,7 +71,10 @@ print type_of(obj.nested.inner)
         "script failed: {}",
         stderr_text(&output)
     );
-    assert_stdout_lines(&output, &["4", "3", "1,9,3,4", "true", "x", "string"]);
+    assert_stdout_lines(
+        &output,
+        &["4", "3", "3", "8,9,3,4", "undefined", "true", "x", "string"],
+    );
 }
 
 #[test]

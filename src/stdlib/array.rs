@@ -54,7 +54,15 @@ fn array_get(args: Vec<Expression>) -> Option<Expression> {
         return None;
     }
     if let (Expression::Array(arr), Expression::Number(index)) = (&args[0], &args[1]) {
-        arr.get(*index as usize).cloned()
+        if *index < 0 {
+            Some(Expression::Undefined)
+        } else {
+            Some(
+                arr.get(*index as usize)
+                    .cloned()
+                    .unwrap_or(Expression::Undefined),
+            )
+        }
     } else {
         None
     }
@@ -205,6 +213,10 @@ mod tests {
         assert!(matches!(
             get(vec![updated, Expression::Number(1)]),
             Some(Expression::Number(9))
+        ));
+        assert!(matches!(
+            get(vec![Expression::Array(vec![]), Expression::Number(4)]),
+            Some(Expression::Undefined)
         ));
     }
 

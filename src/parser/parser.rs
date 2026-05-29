@@ -1,132 +1,155 @@
 use crate::parser::ast::{Expression, InterpolationPart, Statement};
 use crate::parser::error::ParseError;
 use std::collections::VecDeque;
-use std::panic;
 
+type ParseResult<T> = Result<T, ParseError>;
+
+#[derive(Debug, Clone)]
+struct SourceLine {
+    number: usize,
+    text: String,
+}
+
+#[cfg(test)]
 pub(crate) fn parse_program(code: &str) -> Vec<Statement> {
-    let mut lines: VecDeque<&str> = code
+    try_parse_program(code).unwrap_or_else(|err| panic!("{}", err))
+}
+
+pub(crate) fn try_parse_program(code: &str) -> ParseResult<Vec<Statement>> {
+    let mut lines: VecDeque<SourceLine> = code
         .lines()
-        .map(strip_inline_comment)
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
+        .enumerate()
+        .filter_map(|(index, line)| {
+            let text = strip_inline_comment(line).trim().to_string();
+            if text.is_empty() {
+                None
+            } else {
+                Some(SourceLine {
+                    number: index + 1,
+                    text,
+                })
+            }
+        })
         .collect();
     parse_block(&mut lines, false)
 }
 
-pub(crate) fn try_parse_program(code: &str) -> Result<Vec<Statement>, ParseError> {
-    let result = panic::catch_unwind(|| parse_program(code));
-    match result {
-        Ok(stmts) => Ok(stmts),
-        Err(payload) => {
-            let message = if let Some(s) = payload.downcast_ref::<&'static str>() {
-                s.to_string()
-            } else if let Some(s) = payload.downcast_ref::<String>() {
-                s.clone()
-            } else {
-                "Parse error".to_string()
-            };
-            Err(ParseError { message })
-        }
-    }
-}
-
 enum BlockTerminator {
     End,
-    Else(String),
-    Catch(String),
+    Else(SourceLine),
+    Catch(SourceLine),
 }
 
-fn parse_block(lines: &mut VecDeque<&str>, expect_end: bool) -> Vec<Statement> {
-    parse_block_with_terminators(lines, expect_end, false, false).0
+fn parse_block(lines: &mut VecDeque<SourceLine>, expect_end: bool) -> ParseResult<Vec<Statement>> {
+    parse_block_with_terminators(lines, expect_end, false, false).map(|(body, _)| body)
 }
 
 fn parse_block_with_terminators(
-    lines: &mut VecDeque<&str>,
+    lines: &mut VecDeque<SourceLine>,
     expect_end: bool,
     allow_else: bool,
     allow_catch: bool,
-) -> (Vec<Statement>, Option<BlockTerminator>) {
+) -> ParseResult<(Vec<Statement>, Option<BlockTerminator>)> {
     let mut statements = Vec::new();
 
     while let Some(line) = lines.pop_front() {
-        match line.split_whitespace().next() {
-            Some("set") => statements.push(parse_set_statement(line, lines)),
-            Some("function") | Some("export") => statements.push(parse_function(lines, line)),
-            Some("if") => statements.push(parse_if_statement(lines, line)),
-            Some("try") => statements.push(parse_try_catch_statement(lines, line)),
-            Some("print") => statements.push(parse_print_statement(line)),
-            Some("return") => statements.push(parse_return_statement(line)),
-            Some("break") => statements.push(parse_break_statement(line)),
-            Some("continue") => statements.push(parse_continue_statement(line)),
-            Some("for") => statements.push(parse_for_loop(lines, line)),
-            Some("while") => statements.push(parse_while_loop(lines, line)),
-            Some("import") => statements.push(parse_import_statement(line)),
-            Some("test") => statements.push(parse_test_block(lines, line)),
+        match line.text.split_whitespace().next() {
+            Some("set") => statements.push(parse_set_statement(&line, lines)?),
+            Some("function") | Some("export") => statements.push(parse_function(lines, &line)?),
+            Some("if") => statements.push(parse_if_statement(lines, &line)?),
+            Some("try") => statements.push(parse_try_catch_statement(lines, &line)?),
+            Some("print") => statements.push(parse_print_statement(&line)?),
+            Some("return") => statements.push(parse_return_statement(&line)?),
+            Some("break") => statements.push(parse_break_statement(&line)?),
+            Some("continue") => statements.push(parse_continue_statement(&line)?),
+            Some("for") => statements.push(parse_for_loop(lines, &line)?),
+            Some("while") => statements.push(parse_while_loop(lines, &line)?),
+            Some("import") => statements.push(parse_import_statement(&line)?),
+            Some("test") => statements.push(parse_test_block(lines, &line)?),
             Some("else") => {
                 if allow_else {
-                    return (statements, Some(BlockTerminator::Else(line.to_string())));
+                    return Ok((statements, Some(BlockTerminator::Else(line))));
                 }
-                panic!("Unexpected else");
+                return Err(ParseError::at_line(line.number, "Unexpected else"));
             }
             Some("catch") => {
                 if allow_catch {
-                    return (statements, Some(BlockTerminator::Catch(line.to_string())));
+                    return Ok((statements, Some(BlockTerminator::Catch(line))));
                 }
-                panic!("Unexpected catch");
+                return Err(ParseError::at_line(line.number, "Unexpected catch"));
             }
             Some("end") => {
                 if expect_end {
-                    return (statements, Some(BlockTerminator::End));
+                    return Ok((statements, Some(BlockTerminator::End)));
                 }
-                panic!("Unexpected end");
+                return Err(ParseError::at_line(line.number, "Unexpected end"));
             }
-            _ => {
-                if line.contains('(') && line.contains(')') {
-                    statements.push(parse_function_call_statement(line));
+            Some(_) => {
+                if !line.text.contains('(') {
+                    return Err(ParseError::at_line(
+                        line.number,
+                        format!("Unknown statement: {}", line.text),
+                    ));
+                }
+
+                let expr =
+                    parse_expression(&line.text).map_err(|err| err.with_line(line.number))?;
+                if let Expression::FunctionCall { name, args } = expr {
+                    statements.push(Statement::FunctionCall { name, args });
+                } else {
+                    return Err(ParseError::at_line(
+                        line.number,
+                        format!("Unknown statement: {}", line.text),
+                    ));
                 }
             }
+            None => {}
         }
     }
 
     if expect_end {
-        panic!("Missing end for block");
+        return Err(ParseError::new("Missing end for block"));
     }
 
-    (statements, None)
+    Ok((statements, None))
 }
 
-fn strip_required_start_suffix<'a>(header: &'a str, statement: &str) -> &'a str {
+fn strip_required_start_suffix<'a>(
+    header: &'a str,
+    statement: &str,
+    line_number: usize,
+) -> ParseResult<&'a str> {
     let trimmed = header.trim_end();
     trimmed
         .strip_suffix(" start")
-        .unwrap_or_else(|| panic!("{} statement must end with 'start': {}", statement, header))
-        .trim_end()
+        .map(str::trim_end)
+        .ok_or_else(|| {
+            ParseError::at_line(
+                line_number,
+                format!("{} statement must end with 'start': {}", statement, header),
+            )
+        })
 }
 
-fn parse_function_call_statement(expr: &str) -> Statement {
-    let name = extract_before(expr, "(").trim().to_string();
-    let args_str = extract_between(expr, "(", ")");
-    let args = split_top_level(args_str, ',')
-        .into_iter()
-        .filter(|arg| !arg.trim().is_empty())
-        .map(|arg| parse_expression(arg.trim()))
-        .collect();
-
-    Statement::FunctionCall { name, args }
-}
-
-fn parse_set_statement(first_line: &str, lines: &mut VecDeque<&str>) -> Statement {
-    let Some((target, value_part)) = split_set_target_and_value(first_line) else {
-        panic!("Invalid set statement: {}", first_line);
+fn parse_set_statement(
+    first_line: &SourceLine,
+    lines: &mut VecDeque<SourceLine>,
+) -> ParseResult<Statement> {
+    let Some((target, value_part)) = split_set_target_and_value(&first_line.text) else {
+        return Err(ParseError::at_line(
+            first_line.number,
+            format!("Invalid set statement: {}", first_line.text),
+        ));
     };
     let mut value_str = value_part.to_string();
 
     if value_str == "{" {
         let mut lines_to_parse = Vec::new();
         let mut brace_depth = 1;
+        let mut found_closing_brace = false;
 
         while let Some(line) = lines.pop_front() {
-            let trimmed = line.trim();
+            let trimmed = line.text.trim();
 
             let mut in_string = false;
             let mut escaped = false;
@@ -145,13 +168,22 @@ fn parse_set_statement(first_line: &str, lines: &mut VecDeque<&str>) -> Statemen
             }
 
             if trimmed == "}" && brace_depth == 0 {
+                found_closing_brace = true;
                 break;
             } else if brace_depth == 0 {
-                lines_to_parse.push(trimmed);
+                lines_to_parse.push(trimmed.to_string());
+                found_closing_brace = true;
                 break;
             } else {
-                lines_to_parse.push(trimmed);
+                lines_to_parse.push(trimmed.to_string());
             }
+        }
+
+        if !found_closing_brace {
+            return Err(ParseError::at_line(
+                first_line.number,
+                "Missing closing '}' for object literal",
+            ));
         }
 
         let mut result = String::from("{");
@@ -166,95 +198,139 @@ fn parse_set_statement(first_line: &str, lines: &mut VecDeque<&str>) -> Statemen
         value_str = result;
     }
 
-    let value = parse_expression(&value_str);
+    let value = parse_expression(&value_str).map_err(|err| err.with_line(first_line.number))?;
 
-    match parse_expression(target) {
-        Expression::Variable(var) => Statement::Set { var, value },
-        Expression::PropertyAccess { object, property } => Statement::PropertySet {
+    match parse_expression(target).map_err(|err| err.with_line(first_line.number))? {
+        Expression::Variable(var) => Ok(Statement::Set { var, value }),
+        Expression::PropertyAccess { object, property } => Ok(Statement::PropertySet {
             object: *object,
             property: *property,
             value,
-        },
-        _ => panic!("Invalid set target: {}", target),
+        }),
+        _ => Err(ParseError::at_line(
+            first_line.number,
+            format!("Invalid set target: {}", target),
+        )),
     }
 }
 
-fn parse_function(lines: &mut VecDeque<&str>, header: &str) -> Statement {
-    let exported = header.starts_with("export");
-    let header = header.trim_start_matches("export ");
-    let header = strip_required_start_suffix(header, "function");
-    let name = extract_between(header, "function", "(").trim().to_string();
-    let params = extract_between(header, "(", ")")
+fn parse_function(lines: &mut VecDeque<SourceLine>, header: &SourceLine) -> ParseResult<Statement> {
+    let exported = header.text.starts_with("export");
+    let header_text = header.text.trim_start_matches("export ");
+    let header_text = strip_required_start_suffix(header_text, "function", header.number)?;
+    let name = extract_between(header_text, "function", "(")
+        .trim()
+        .to_string();
+    if name.is_empty() {
+        return Err(ParseError::at_line(
+            header.number,
+            "Function name is required",
+        ));
+    }
+    let params = extract_between(header_text, "(", ")")
         .split(',')
         .map(str::trim)
         .filter(|param| !param.is_empty())
         .map(String::from)
         .collect();
 
-    let body = parse_block(lines, true);
+    let body = parse_block(lines, true)?;
 
-    Statement::Function {
+    Ok(Statement::Function {
         name,
         params,
         body,
         exported,
-    }
+    })
 }
 
-fn parse_if_statement(lines: &mut VecDeque<&str>, header: &str) -> Statement {
-    let header = strip_required_start_suffix(header, "if");
-    let condition = parse_expression(header[3..].trim());
-    let (body, terminator) = parse_block_with_terminators(lines, true, true, false);
+fn parse_if_statement(
+    lines: &mut VecDeque<SourceLine>,
+    header: &SourceLine,
+) -> ParseResult<Statement> {
+    let header_text = strip_required_start_suffix(&header.text, "if", header.number)?;
+    let condition_text = header_text.strip_prefix("if").map(str::trim).unwrap_or("");
+    if condition_text.is_empty() {
+        return Err(ParseError::at_line(
+            header.number,
+            "if condition is required",
+        ));
+    }
+    let condition = parse_expression(condition_text).map_err(|err| err.with_line(header.number))?;
+    let (body, terminator) = parse_block_with_terminators(lines, true, true, false)?;
     let else_body = match terminator {
         Some(BlockTerminator::End) => None,
-        Some(BlockTerminator::Else(line)) => Some(parse_else_branch(lines, &line)),
-        Some(BlockTerminator::Catch(_)) | None => panic!("Missing end for if block"),
+        Some(BlockTerminator::Else(line)) => Some(parse_else_branch(lines, &line)?),
+        Some(BlockTerminator::Catch(_)) | None => {
+            return Err(ParseError::at_line(
+                header.number,
+                "Missing end for if block",
+            ))
+        }
     };
 
-    Statement::If {
+    Ok(Statement::If {
         condition,
         body,
         else_body,
-    }
+    })
 }
 
-fn parse_print_statement(line: &str) -> Statement {
-    Statement::Print {
-        expr: parse_expression(line[6..].trim()),
+fn parse_print_statement(line: &SourceLine) -> ParseResult<Statement> {
+    let expr_text = line.text.strip_prefix("print").map(str::trim).unwrap_or("");
+    if expr_text.is_empty() {
+        return Err(ParseError::at_line(
+            line.number,
+            "print expression is required",
+        ));
     }
+
+    Ok(Statement::Print {
+        expr: parse_expression(expr_text).map_err(|err| err.with_line(line.number))?,
+    })
 }
 
-fn parse_return_statement(line: &str) -> Statement {
-    let expr_str = line.trim();
+fn parse_return_statement(line: &SourceLine) -> ParseResult<Statement> {
+    let expr_str = line.text.trim();
     if expr_str.len() > 6 {
-        Statement::Return {
-            expr: parse_expression(expr_str[6..].trim()),
-        }
+        Ok(Statement::Return {
+            expr: parse_expression(expr_str[6..].trim())
+                .map_err(|err| err.with_line(line.number))?,
+        })
     } else {
-        Statement::Return {
+        Ok(Statement::Return {
             expr: Expression::Null,
-        }
+        })
     }
 }
 
-fn parse_break_statement(line: &str) -> Statement {
-    if line.trim() != "break" {
-        panic!("Invalid break statement: {}", line);
+fn parse_break_statement(line: &SourceLine) -> ParseResult<Statement> {
+    if line.text.trim() != "break" {
+        return Err(ParseError::at_line(
+            line.number,
+            format!("Invalid break statement: {}", line.text),
+        ));
     }
-    Statement::Break
+    Ok(Statement::Break)
 }
 
-fn parse_continue_statement(line: &str) -> Statement {
-    if line.trim() != "continue" {
-        panic!("Invalid continue statement: {}", line);
+fn parse_continue_statement(line: &SourceLine) -> ParseResult<Statement> {
+    if line.text.trim() != "continue" {
+        return Err(ParseError::at_line(
+            line.number,
+            format!("Invalid continue statement: {}", line.text),
+        ));
     }
-    Statement::Continue
+    Ok(Statement::Continue)
 }
 
-fn parse_import_statement(line: &str) -> Statement {
-    let parts: Vec<&str> = line.split_whitespace().collect();
+fn parse_import_statement(line: &SourceLine) -> ParseResult<Statement> {
+    let parts: Vec<&str> = line.text.split_whitespace().collect();
     if parts.len() < 4 || parts[2] != "from" {
-        panic!("Invalid import syntax. Expected: import module_name from 'file_path'");
+        return Err(ParseError::at_line(
+            line.number,
+            "Invalid import syntax. Expected: import module_name from 'file_path'",
+        ));
     }
 
     let module_name = parts[1].to_string();
@@ -266,167 +342,194 @@ fn parse_import_statement(line: &str) -> Statement {
     {
         file_path_with_quotes[1..file_path_with_quotes.len() - 1].to_string()
     } else {
-        panic!("File path must be quoted in import statement");
+        return Err(ParseError::at_line(
+            line.number,
+            "File path must be quoted in import statement",
+        ));
     };
 
-    Statement::Import {
+    Ok(Statement::Import {
         module_name,
         file_path,
-    }
+    })
 }
 
-fn parse_else_branch(lines: &mut VecDeque<&str>, line: &str) -> Vec<Statement> {
-    if line.trim() == "else start" {
+fn parse_else_branch(
+    lines: &mut VecDeque<SourceLine>,
+    line: &SourceLine,
+) -> ParseResult<Vec<Statement>> {
+    if line.text.trim() == "else start" {
         return parse_block(lines, true);
     }
 
-    let else_if_header = line
-        .trim()
-        .strip_prefix("else ")
-        .unwrap_or_else(|| panic!("Invalid else statement: {}", line));
+    let else_if_header = line.text.trim().strip_prefix("else ").ok_or_else(|| {
+        ParseError::at_line(
+            line.number,
+            format!("Invalid else statement: {}", line.text),
+        )
+    })?;
 
     if !else_if_header.starts_with("if ") {
-        panic!("Invalid else statement: {}", line);
+        return Err(ParseError::at_line(
+            line.number,
+            format!("Invalid else statement: {}", line.text),
+        ));
     }
 
-    vec![parse_if_statement(lines, else_if_header)]
+    let synthetic_line = SourceLine {
+        number: line.number,
+        text: else_if_header.to_string(),
+    };
+    Ok(vec![parse_if_statement(lines, &synthetic_line)?])
 }
 
-fn parse_try_catch_statement(lines: &mut VecDeque<&str>, header: &str) -> Statement {
-    let try_header = strip_required_start_suffix(header, "try");
+fn parse_try_catch_statement(
+    lines: &mut VecDeque<SourceLine>,
+    header: &SourceLine,
+) -> ParseResult<Statement> {
+    let try_header = strip_required_start_suffix(&header.text, "try", header.number)?;
     if try_header.trim() != "try" {
-        panic!("Invalid try statement: {}", header);
+        return Err(ParseError::at_line(
+            header.number,
+            format!("Invalid try statement: {}", header.text),
+        ));
     }
 
-    let (try_body, terminator) = parse_block_with_terminators(lines, true, false, true);
+    let (try_body, terminator) = parse_block_with_terminators(lines, true, false, true)?;
     let catch_header = match terminator {
         Some(BlockTerminator::Catch(line)) => line,
         Some(BlockTerminator::End) | Some(BlockTerminator::Else(_)) | None => {
-            panic!("try block must be followed by catch")
+            return Err(ParseError::at_line(
+                header.number,
+                "try block must be followed by catch",
+            ))
         }
     };
 
-    let catch_header = strip_required_start_suffix(&catch_header, "catch");
-    let error_var = catch_header
+    let catch_header_text =
+        strip_required_start_suffix(&catch_header.text, "catch", catch_header.number)?;
+    let error_var = catch_header_text
         .strip_prefix("catch")
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .unwrap_or("error")
         .to_string();
-    let catch_body = parse_block(lines, true);
+    let catch_body = parse_block(lines, true)?;
 
-    Statement::TryCatch {
+    Ok(Statement::TryCatch {
         try_body,
         error_var,
         catch_body,
-    }
+    })
 }
 
-fn parse_expression(expr: &str) -> Expression {
+fn parse_expression(expr: &str) -> ParseResult<Expression> {
     parse_comparison(expr.trim())
 }
 
-fn parse_comparison(expr: &str) -> Expression {
+fn parse_comparison(expr: &str) -> ParseResult<Expression> {
     if let Some((operator_pos, operator)) =
         find_top_level_binary_operator(expr, &["==", "!=", "<=", ">=", "<", ">"])
     {
-        let left = parse_bitwise_or(expr[..operator_pos].trim());
-        let right = parse_bitwise_or(expr[operator_pos + operator.len()..].trim());
-        return Expression::Comparison {
+        let left = parse_bitwise_or(expr[..operator_pos].trim())?;
+        let right = parse_bitwise_or(expr[operator_pos + operator.len()..].trim())?;
+        return Ok(Expression::Comparison {
             left: Box::new(left),
             operator: operator.to_string(),
             right: Box::new(right),
-        };
+        });
     }
 
     parse_bitwise_or(expr)
 }
 
-fn parse_bitwise_or(expr: &str) -> Expression {
+fn parse_bitwise_or(expr: &str) -> ParseResult<Expression> {
     if let Some((operator_pos, operator)) = find_top_level_binary_operator(expr, &["|"]) {
-        return Expression::BinaryOperation {
-            left: Box::new(parse_bitwise_or(expr[..operator_pos].trim())),
+        return Ok(Expression::BinaryOperation {
+            left: Box::new(parse_bitwise_or(expr[..operator_pos].trim())?),
             operator: operator.to_string(),
             right: Box::new(parse_bitwise_and(
                 expr[operator_pos + operator.len()..].trim(),
-            )),
-        };
+            )?),
+        });
     }
 
     parse_bitwise_and(expr)
 }
 
-fn parse_bitwise_and(expr: &str) -> Expression {
+fn parse_bitwise_and(expr: &str) -> ParseResult<Expression> {
     if let Some((operator_pos, operator)) = find_top_level_binary_operator(expr, &["&"]) {
-        return Expression::BinaryOperation {
-            left: Box::new(parse_bitwise_and(expr[..operator_pos].trim())),
+        return Ok(Expression::BinaryOperation {
+            left: Box::new(parse_bitwise_and(expr[..operator_pos].trim())?),
             operator: operator.to_string(),
-            right: Box::new(parse_shift(expr[operator_pos + operator.len()..].trim())),
-        };
+            right: Box::new(parse_shift(expr[operator_pos + operator.len()..].trim())?),
+        });
     }
 
     parse_shift(expr)
 }
 
-fn parse_shift(expr: &str) -> Expression {
+fn parse_shift(expr: &str) -> ParseResult<Expression> {
     if let Some((operator_pos, operator)) = find_top_level_binary_operator(expr, &["<<", ">>"]) {
-        return Expression::BinaryOperation {
-            left: Box::new(parse_shift(expr[..operator_pos].trim())),
+        return Ok(Expression::BinaryOperation {
+            left: Box::new(parse_shift(expr[..operator_pos].trim())?),
             operator: operator.to_string(),
-            right: Box::new(parse_additive(expr[operator_pos + operator.len()..].trim())),
-        };
+            right: Box::new(parse_additive(
+                expr[operator_pos + operator.len()..].trim(),
+            )?),
+        });
     }
 
     parse_additive(expr)
 }
 
-fn parse_additive(expr: &str) -> Expression {
+fn parse_additive(expr: &str) -> ParseResult<Expression> {
     if let Some((operator_pos, operator)) = find_top_level_binary_operator(expr, &["+", "-"]) {
-        return Expression::BinaryOperation {
-            left: Box::new(parse_additive(expr[..operator_pos].trim())),
+        return Ok(Expression::BinaryOperation {
+            left: Box::new(parse_additive(expr[..operator_pos].trim())?),
             operator: operator.to_string(),
             right: Box::new(parse_multiplicative(
                 expr[operator_pos + operator.len()..].trim(),
-            )),
-        };
+            )?),
+        });
     }
 
     parse_multiplicative(expr)
 }
 
-fn parse_multiplicative(expr: &str) -> Expression {
+fn parse_multiplicative(expr: &str) -> ParseResult<Expression> {
     if let Some((operator_pos, operator)) = find_top_level_binary_operator(expr, &["*", "/", "%"]) {
-        return Expression::BinaryOperation {
-            left: Box::new(parse_multiplicative(expr[..operator_pos].trim())),
+        return Ok(Expression::BinaryOperation {
+            left: Box::new(parse_multiplicative(expr[..operator_pos].trim())?),
             operator: operator.to_string(),
-            right: Box::new(parse_unary(expr[operator_pos + operator.len()..].trim())),
-        };
+            right: Box::new(parse_unary(expr[operator_pos + operator.len()..].trim())?),
+        });
     }
 
     parse_unary(expr)
 }
 
-fn parse_unary(expr: &str) -> Expression {
+fn parse_unary(expr: &str) -> ParseResult<Expression> {
     let expr = expr.trim();
 
     if let Some(rest) = expr.strip_prefix('~') {
-        return Expression::UnaryOperation {
+        return Ok(Expression::UnaryOperation {
             operator: "~".to_string(),
-            expr: Box::new(parse_unary(rest.trim())),
-        };
+            expr: Box::new(parse_unary(rest.trim())?),
+        });
     }
 
     if should_parse_as_unary_minus(expr) {
-        return Expression::UnaryOperation {
+        return Ok(Expression::UnaryOperation {
             operator: "-".to_string(),
-            expr: Box::new(parse_unary(expr[1..].trim())),
-        };
+            expr: Box::new(parse_unary(expr[1..].trim())?),
+        });
     }
 
     parse_primary(expr)
 }
 
-fn parse_primary(expr: &str) -> Expression {
+fn parse_primary(expr: &str) -> ParseResult<Expression> {
     let trimmed = expr.trim();
     let expr = strip_grouping_parentheses(trimmed);
     if expr != trimmed {
@@ -436,7 +539,7 @@ fn parse_primary(expr: &str) -> Expression {
     parse_postfix_expression(expr)
 }
 
-fn parse_object(expr: &str) -> Expression {
+fn parse_object(expr: &str) -> ParseResult<Expression> {
     let content = extract_between(expr, "{", "}");
     let mut properties = std::collections::HashMap::new();
 
@@ -453,46 +556,61 @@ fn parse_object(expr: &str) -> Expression {
         let key_value: Vec<&str> = split_top_level_once(&part, ':');
 
         if key_value.len() != 2 {
-            panic!("Invalid object syntax: {}", expr);
+            return Err(ParseError::new(format!("Invalid object syntax: {}", expr)));
         }
         let key = key_value[0].trim().to_string();
         let value_str = key_value[1].trim();
-        let value = parse_expression(value_str);
+        let value = parse_expression(value_str)?;
         properties.insert(key, value);
     }
 
-    Expression::Object(properties)
+    Ok(Expression::Object(properties))
 }
 
-fn parse_for_loop(lines: &mut VecDeque<&str>, header: &str) -> Statement {
-    let header = strip_required_start_suffix(header, "for");
-    let parts: Vec<&str> = header.split_whitespace().collect();
-    if parts[2] != "in" {
-        panic!("Invalid for loop syntax: {}", header);
+fn parse_for_loop(lines: &mut VecDeque<SourceLine>, header: &SourceLine) -> ParseResult<Statement> {
+    let header_text = strip_required_start_suffix(&header.text, "for", header.number)?;
+    let parts: Vec<&str> = header_text.split_whitespace().collect();
+    if parts.len() < 4 || parts[0] != "for" || parts[2] != "in" {
+        return Err(ParseError::at_line(
+            header.number,
+            format!("Invalid for loop syntax: {}", header_text),
+        ));
     }
 
     let variable = parts[1].to_string();
     let bind = parts[3..].join(" ");
-    let iterable = parse_expression(&bind);
-    let body = parse_block(lines, true);
+    let iterable = parse_expression(&bind).map_err(|err| err.with_line(header.number))?;
+    let body = parse_block(lines, true)?;
 
-    Statement::ForLoop {
+    Ok(Statement::ForLoop {
         variable,
         iterable,
         body,
+    })
+}
+
+fn parse_while_loop(
+    lines: &mut VecDeque<SourceLine>,
+    header: &SourceLine,
+) -> ParseResult<Statement> {
+    let header_text = strip_required_start_suffix(&header.text, "while", header.number)?;
+    let condition_str = header_text
+        .strip_prefix("while")
+        .map(str::trim)
+        .unwrap_or("");
+    if condition_str.is_empty() {
+        return Err(ParseError::at_line(
+            header.number,
+            "while condition is required",
+        ));
     }
+    let condition = parse_expression(condition_str).map_err(|err| err.with_line(header.number))?;
+    let body = parse_block(lines, true)?;
+
+    Ok(Statement::WhileLoop { condition, body })
 }
 
-fn parse_while_loop(lines: &mut VecDeque<&str>, header: &str) -> Statement {
-    let header = strip_required_start_suffix(header, "while");
-    let condition_str = header[6..].trim();
-    let condition = parse_expression(condition_str);
-    let body = parse_block(lines, true);
-
-    Statement::WhileLoop { condition, body }
-}
-
-fn parse_array(expr: &str) -> Expression {
+fn parse_array(expr: &str) -> ParseResult<Expression> {
     let content = extract_between(expr, "[", "]");
     let elements: Vec<Expression> = split_top_level(content, ',')
         .into_iter()
@@ -505,25 +623,25 @@ fn parse_array(expr: &str) -> Expression {
             }
         })
         .map(|s| parse_expression(&s))
-        .collect();
+        .collect::<ParseResult<Vec<_>>>()?;
 
-    Expression::Array(elements)
+    Ok(Expression::Array(elements))
 }
 
-fn parse_function_call(expr: &str) -> Expression {
+fn parse_function_call(expr: &str) -> ParseResult<Expression> {
     let name = extract_before(expr, "(").trim().to_string();
     let args_str = extract_between(expr, "(", ")");
     let args = split_top_level(args_str, ',')
         .into_iter()
         .filter(|arg| !arg.trim().is_empty())
         .map(|arg| parse_expression(arg.trim()))
-        .collect();
+        .collect::<ParseResult<Vec<_>>>()?;
 
-    Expression::FunctionCall { name, args }
+    Ok(Expression::FunctionCall { name, args })
 }
 
-fn parse_postfix_expression(expr: &str) -> Expression {
-    let (mut current, mut index) = parse_base_expression(expr);
+fn parse_postfix_expression(expr: &str) -> ParseResult<Expression> {
+    let (mut current, mut index) = parse_base_expression(expr)?;
 
     while index < expr.len() {
         index = skip_whitespace(expr, index);
@@ -538,7 +656,10 @@ fn parse_postfix_expression(expr: &str) -> Expression {
             let property_start = index;
             index += consume_identifier(&expr[index..]);
             if property_start == index {
-                panic!("Invalid property access: {}", expr);
+                return Err(ParseError::new(format!(
+                    "Invalid property access: {}",
+                    expr
+                )));
             }
 
             current = Expression::PropertyAccess {
@@ -552,8 +673,8 @@ fn parse_postfix_expression(expr: &str) -> Expression {
 
         if suffix.starts_with('[') {
             let end = find_matching_delimiter_end(expr, index, '[', ']')
-                .unwrap_or_else(|| panic!("Invalid bracket access: {}", expr));
-            let property_expr = parse_expression(&expr[index + 1..end - 1]);
+                .ok_or_else(|| ParseError::new(format!("Invalid bracket access: {}", expr)))?;
+            let property_expr = parse_expression(&expr[index + 1..end - 1])?;
             current = Expression::PropertyAccess {
                 object: Box::new(current),
                 property: Box::new(property_expr),
@@ -562,64 +683,65 @@ fn parse_postfix_expression(expr: &str) -> Expression {
             continue;
         }
 
-        panic!("Invalid expression: {}", expr);
+        return Err(ParseError::new(format!("Invalid expression: {}", expr)));
     }
 
-    current
+    Ok(current)
 }
 
-fn parse_base_expression(expr: &str) -> (Expression, usize) {
+fn parse_base_expression(expr: &str) -> ParseResult<(Expression, usize)> {
     let expr = expr.trim();
     if expr.is_empty() {
-        panic!("Invalid expression: {}", expr);
+        return Err(ParseError::new(format!("Invalid expression: {}", expr)));
     }
 
     let first = expr.chars().next().unwrap();
     match first {
         '"' => {
-            let end = find_string_end(expr).unwrap_or_else(|| panic!("Unterminated string: {}", expr));
+            let end = find_string_end(expr)
+                .ok_or_else(|| ParseError::new(format!("Unterminated string: {}", expr)))?;
             let content = &expr[1..end - 1];
             let expression = if content.contains("${") {
-                parse_interpolated_string(content)
+                parse_interpolated_string(content)?
             } else {
                 Expression::StringLiteral(content.to_string())
             };
-            (expression, end)
+            Ok((expression, end))
         }
         '[' => {
             let end = find_matching_delimiter_end(expr, 0, '[', ']')
-                .unwrap_or_else(|| panic!("Invalid array syntax: {}", expr));
-            (parse_array(&expr[..end]), end)
+                .ok_or_else(|| ParseError::new(format!("Invalid array syntax: {}", expr)))?;
+            Ok((parse_array(&expr[..end])?, end))
         }
         '{' => {
             let end = find_matching_delimiter_end(expr, 0, '{', '}')
-                .unwrap_or_else(|| panic!("Invalid object syntax: {}", expr));
-            (parse_object(&expr[..end]), end)
+                .ok_or_else(|| ParseError::new(format!("Invalid object syntax: {}", expr)))?;
+            Ok((parse_object(&expr[..end])?, end))
         }
         '(' => {
             let end = find_matching_delimiter_end(expr, 0, '(', ')')
-                .unwrap_or_else(|| panic!("Invalid grouping expression: {}", expr));
-            (parse_expression(&expr[1..end - 1]), end)
+                .ok_or_else(|| ParseError::new(format!("Invalid grouping expression: {}", expr)))?;
+            Ok((parse_expression(&expr[1..end - 1])?, end))
         }
         _ if first.is_ascii_digit() => {
             let length = consume_digits(expr);
             let number = expr[..length]
                 .parse::<i32>()
-                .unwrap_or_else(|_| panic!("Invalid number literal: {}", expr));
-            (Expression::Number(number), length)
+                .map_err(|_| ParseError::new(format!("Invalid number literal: {}", expr)))?;
+            Ok((Expression::Number(number), length))
         }
         _ => {
             let first_identifier_len = consume_identifier(expr);
             if first_identifier_len == 0 {
-                panic!("Invalid expression: {}", expr);
+                return Err(ParseError::new(format!("Invalid expression: {}", expr)));
             }
 
             let dotted_head_len = consume_dotted_identifier_chain(expr);
             let dotted_head_end = skip_whitespace(expr, dotted_head_len);
             if dotted_head_end < expr.len() && expr[dotted_head_end..].starts_with('(') {
                 let call_end = find_matching_delimiter_end(expr, dotted_head_end, '(', ')')
-                    .unwrap_or_else(|| panic!("Invalid function call: {}", expr));
-                return (parse_function_call(&expr[..call_end]), call_end);
+                    .ok_or_else(|| ParseError::new(format!("Invalid function call: {}", expr)))?;
+                return Ok((parse_function_call(&expr[..call_end])?, call_end));
             }
 
             let identifier = &expr[..first_identifier_len];
@@ -629,27 +751,30 @@ fn parse_base_expression(expr: &str) -> (Expression, usize) {
                 "null" => Expression::Null,
                 _ => Expression::Variable(identifier.to_string()),
             };
-            (expression, first_identifier_len)
+            Ok((expression, first_identifier_len))
         }
     }
 }
 
-fn parse_test_block(lines: &mut VecDeque<&str>, header: &str) -> Statement {
-    let header = strip_required_start_suffix(header, "test");
-    let name_start = header.find('"').unwrap_or(0);
-    let name_end = header[name_start + 1..]
+fn parse_test_block(
+    lines: &mut VecDeque<SourceLine>,
+    header: &SourceLine,
+) -> ParseResult<Statement> {
+    let header_text = strip_required_start_suffix(&header.text, "test", header.number)?;
+    let name_start = header_text.find('"').unwrap_or(0);
+    let name_end = header_text[name_start + 1..]
         .find('"')
         .map(|idx| idx + name_start + 1)
         .unwrap_or(name_start);
     let name = if name_start > 0 && name_end > name_start {
-        header[name_start + 1..name_end].to_string()
+        header_text[name_start + 1..name_end].to_string()
     } else {
         "Unnamed Test".to_string()
     };
 
-    let body = parse_block(lines, true);
+    let body = parse_block(lines, true)?;
 
-    Statement::Test { name, body }
+    Ok(Statement::Test { name, body })
 }
 
 fn split_set_target_and_value(line: &str) -> Option<(&str, &str)> {
@@ -1091,7 +1216,7 @@ fn strip_inline_comment(line: &str) -> &str {
     line
 }
 
-fn parse_interpolated_string(content: &str) -> Expression {
+fn parse_interpolated_string(content: &str) -> ParseResult<Expression> {
     let mut parts = Vec::new();
     let mut current_text = String::new();
     let mut chars = content.chars().peekable();
@@ -1105,7 +1230,7 @@ fn parse_interpolated_string(content: &str) -> Expression {
 
             chars.next();
             let expr_str = extract_balanced_braces(&mut chars);
-            let expr = parse_expression(&expr_str);
+            let expr = parse_expression(&expr_str)?;
             parts.push(InterpolationPart::Expression(expr));
         } else if ch == '\\' && chars.peek() == Some(&'$') {
             chars.next();
@@ -1119,7 +1244,7 @@ fn parse_interpolated_string(content: &str) -> Expression {
         parts.push(InterpolationPart::Text(current_text));
     }
 
-    Expression::StringInterpolation { parts }
+    Ok(Expression::StringInterpolation { parts })
 }
 
 fn extract_balanced_braces(chars: &mut std::iter::Peekable<std::str::Chars>) -> String {
@@ -1213,6 +1338,7 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(err.message.contains("if statement must end with 'start'"));
+        assert_eq!(err.line, Some(1));
     }
 
     #[test]
@@ -1229,6 +1355,15 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(err.message.contains("Unexpected end"));
+    }
+
+    #[test]
+    fn parse_program_rejects_unknown_statement() {
+        let result = try_parse_program("print 1\nnonsense statement\n");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.message.contains("Unknown statement"));
+        assert_eq!(err.line, Some(2));
     }
 
     #[test]

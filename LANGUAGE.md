@@ -28,6 +28,7 @@ cargo run
 - `#` starts a comment (outside strings).
 - Blocks use explicit `start` and `end`.
 - Invalid/missing block delimiters are parse errors.
+- Parse errors include the source line when the location is known.
 
 Example:
 
@@ -68,6 +69,13 @@ set obj {a: 1, b: true}
 set user {name: "A"}
 set user.profile.rank "gold"
 set user["profile"]["rank"] "gold"
+```
+
+Array elements can be assigned with numeric bracket indexes:
+
+```vx
+set arr [10, 20]
+set arr[1] 99
 ```
 
 ### 4.3 Printing
@@ -181,6 +189,7 @@ Supported expression forms:
 - objects: `{a: 1, b: "x"}`
 - property access: `obj.field.nested`
 - dynamic property access: `obj[key]`, `obj["field"]`, `user.profile[key]`
+- array indexing: `arr[0]`, `matrix[0][1]`
 - interpolation: `"hello ${name}"`
 
 ### String interpolation
@@ -219,8 +228,10 @@ Native built-ins return `None` on invalid arguments; runtime treats this as an e
 Property access behavior:
 
 - missing object properties evaluate to `undefined`
-- array out-of-bounds still evaluate to `null`
-- property access on non-objects is a runtime error
+- array out-of-bounds evaluates to `undefined`
+- object bracket keys must evaluate to strings
+- array bracket indexes must evaluate to numbers
+- property access on non-objects/non-arrays is a runtime error
 
 ## 7. Imports and Path Resolution
 
@@ -249,7 +260,7 @@ Nested imports also resolve relative to their own file locations.
 - `array_push(arr, ...values)`
 - `array_pop(arr)`
 - `array_length(arr)`
-- `array_get(arr, index)`
+- `array_get(arr, index)` (returns `undefined` for out-of-bounds indexes)
 - `array_set(arr, index, value)`
 - `array_slice(arr, start, end)`
 - `array_join(arr, sep)`
@@ -334,6 +345,7 @@ Notes:
 - Expressions are mostly expected on one line.
 - Numeric type is integer-only (`i32`).
 - Arithmetic, bitwise, and shift operators require numeric operands.
+- Array indexes must be non-negative integers.
 - String concatenation is explicit: use interpolation or `string_concat(...)`.
 - Function argument counts must match exactly.
 - `test` blocks do not inherit outer variables.
