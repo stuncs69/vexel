@@ -63,6 +63,39 @@ fn reports_runtime_errors_for_invalid_bracket_property_access() {
 }
 
 #[test]
+fn rejects_calling_unexported_module_functions() {
+    let workspace = create_workspace("private_module_function");
+    write_workspace_file(
+        &workspace,
+        "module.vx",
+        r#"
+function hidden() start
+    return 99
+end
+
+export function visible() start
+    return hidden()
+end
+"#,
+    );
+    let script = write_workspace_file(
+        &workspace,
+        "main.vx",
+        r#"
+import m from "./module.vx"
+print m.visible()
+print m.hidden()
+"#,
+    );
+    let arg = script.to_string_lossy().to_string();
+
+    let output = run_vexel(&workspace, &[&arg]);
+    assert!(!output.status.success());
+    assert!(stdout_text(&output).contains("99\n"));
+    assert!(stderr_text(&output).contains("Function 'm.hidden' is not exported"));
+}
+
+#[test]
 fn test_blocks_do_not_run_without_test_flag() {
     let workspace = create_workspace("tests_skipped");
     write_workspace_file(

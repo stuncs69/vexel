@@ -41,6 +41,53 @@ end
 }
 
 #[test]
+fn executes_functions_with_lexical_global_scope() {
+    let workspace = create_workspace("function_scope");
+    write_workspace_file(
+        &workspace,
+        "main.vx",
+        r#"
+set base 10
+set count 0
+
+function add_base(x) start
+    return x + base
+end
+
+function call_add(base) start
+    return add_base(base)
+end
+
+function bump() start
+    set count count + 1
+    return count
+end
+
+function echo(base) start
+    set base base + 1
+    return base
+end
+
+print add_base(5)
+print call_add(2)
+print bump()
+print bump()
+print count
+print echo(4)
+print base
+"#,
+    );
+
+    let output = run_script(&workspace, "main.vx");
+    assert!(
+        output.status.success(),
+        "script failed: {}",
+        stderr_text(&output)
+    );
+    assert_stdout_lines(&output, &["15", "12", "1", "2", "2", "5", "10"]);
+}
+
+#[test]
 fn executes_array_and_object_features() {
     let workspace = create_workspace("arrays_objects");
     write_workspace_file(
@@ -166,12 +213,20 @@ fn executes_imported_module_functions() {
         &workspace,
         "module.vx",
         r#"
+set step 1
+set count 0
+
 function helper(x) start
-    return math_add(x, 1)
+    return x + step
 end
 
 export function inc(x) start
     return helper(x)
+end
+
+export function next() start
+    set count count + 1
+    return count
 end
 "#,
     );
@@ -181,6 +236,8 @@ end
         r#"
 import m from "./module.vx"
 print m.inc(5)
+print m.next()
+print m.next()
 "#,
     );
 
@@ -190,7 +247,7 @@ print m.inc(5)
         "script failed: {}",
         stderr_text(&output)
     );
-    assert_stdout_lines(&output, &["6"]);
+    assert_stdout_lines(&output, &["6", "1", "2"]);
 }
 
 #[test]

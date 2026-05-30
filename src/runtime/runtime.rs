@@ -9,12 +9,72 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-type FunctionSignature = (Vec<String>, Vec<Statement>, bool);
-type FunctionTable = HashMap<String, FunctionSignature>;
+type VariableTable = HashMap<String, Expression>;
+
+#[derive(Clone)]
+struct VariableScope {
+    variables: Rc<RefCell<VariableTable>>,
+    parent: Option<Rc<VariableScope>>,
+}
+
+impl VariableScope {
+    fn root() -> Rc<Self> {
+        Self::new(HashMap::default(), None)
+    }
+
+    fn child(variables: VariableTable, parent: Rc<VariableScope>) -> Rc<Self> {
+        Self::new(variables, Some(parent))
+    }
+
+    fn new(variables: VariableTable, parent: Option<Rc<VariableScope>>) -> Rc<Self> {
+        Rc::new(Self {
+            variables: Rc::new(RefCell::new(variables)),
+            parent,
+        })
+    }
+
+    fn lookup(scope: &Rc<Self>, name: &str) -> Option<Expression> {
+        if let Some(value) = scope.variables.borrow().get(name) {
+            return Some(value.clone());
+        }
+
+        scope
+            .parent
+            .as_ref()
+            .and_then(|parent| Self::lookup(parent, name))
+    }
+
+    fn find_containing(scope: &Rc<Self>, name: &str) -> Option<Rc<Self>> {
+        if scope.variables.borrow().contains_key(name) {
+            return Some(scope.clone());
+        }
+
+        scope
+            .parent
+            .as_ref()
+            .and_then(|parent| Self::find_containing(parent, name))
+    }
+}
+
+#[derive(Clone)]
+struct FunctionDefinition {
+    params: Vec<String>,
+    body: Vec<Statement>,
+    exported: bool,
+    scope: Rc<VariableScope>,
+    base_dir: PathBuf,
+}
+
+#[derive(Clone)]
+struct ModuleState {
+    functions: SharedFunctionTable,
+}
+
+type FunctionTable = HashMap<String, FunctionDefinition>;
 type SharedFunctionTable = Rc<RefCell<FunctionTable>>;
 type NativeFunction = fn(Vec<Expression>) -> Option<Expression>;
 type NativeFunctionTable = Rc<HashMap<String, NativeFunction>>;
-type ModuleTable = HashMap<String, FunctionTable>;
+type ModuleTable = HashMap<String, ModuleState>;
 type SharedModuleTable = Rc<RefCell<ModuleTable>>;
 
 #[derive(Debug, Clone)]
@@ -52,7 +112,7 @@ enum AccessKey {
 }
 
 pub struct Runtime {
-    variables: HashMap<String, Expression>,
+    scope: Rc<VariableScope>,
     functions: SharedFunctionTable,
     native_functions: NativeFunctionTable,
     modules: SharedModuleTable,
@@ -68,7 +128,7 @@ impl Runtime {
 
     pub(crate) fn new_with_base_dir(base_dir: PathBuf) -> Self {
         let mut runtime = Runtime {
-            variables: HashMap::default(),
+            scope: VariableScope::root(),
             functions: Rc::new(RefCell::new(HashMap::default())),
             native_functions: Rc::new(HashMap::default()),
             modules: Rc::new(RefCell::new(HashMap::default())),
@@ -86,6 +146,43 @@ impl Runtime {
             map.insert(name.to_string(), func);
         }
         self.native_functions = Rc::new(map);
+    }
+
+    fn define_function(
+        &self,
+        name: String,
+        params: Vec<String>,
+        body: Vec<Statement>,
+        exported: bool,
+    ) {
+        self.functions.borrow_mut().insert(
+            name,
+            FunctionDefinition {
+                params,
+                body,
+                exported,
+                scope: self.scope.clone(),
+                base_dir: self.base_dir.clone(),
+            },
+        );
+    }
+
+    fn assign_variable(&self, name: String, value: Expression) {
+        let target_scope = VariableScope::find_containing(&self.scope, &name)
+            .unwrap_or_else(|| self.scope.clone());
+        target_scope.variables.borrow_mut().insert(name, value);
+    }
+
+    fn set_local_variable(&self, name: String, value: Expression) -> Option<Expression> {
+        self.scope.variables.borrow_mut().insert(name, value)
+    }
+
+    fn remove_local_variable(&self, name: &str) -> Option<Expression> {
+        self.scope.variables.borrow_mut().remove(name)
+    }
+
+    fn lookup_variable(&self, name: &str) -> Option<Expression> {
+        VariableScope::lookup(&self.scope, name)
     }
 
     pub(crate) fn execute(
@@ -108,8 +205,12 @@ impl Runtime {
         for statement in statements {
             if let Statement::Test { name, body } = statement {
                 println!("Running test: {}", name);
-                let mut nested_runtime =
-                    self.create_nested_runtime(HashMap::default(), self.functions.clone());
+                let mut nested_runtime = self.create_nested_runtime(
+                    HashMap::default(),
+                    self.functions.clone(),
+                    self.scope.clone(),
+                    self.base_dir.clone(),
+                );
                 match nested_runtime.execute_with_signal(body)? {
                     FlowSignal::None => {}
                     FlowSignal::Return(_) => {
@@ -140,9 +241,7 @@ impl Runtime {
                     body,
                     exported,
                 } => {
-                    self.functions
-                        .borrow_mut()
-                        .insert(name.clone(), (params.clone(), body.clone(), *exported));
+                    self.define_function(name.clone(), params.clone(), body.clone(), *exported);
                 }
                 Statement::Import {
                     module_name,
@@ -184,7 +283,7 @@ impl Runtime {
                     };
 
                     for element in elements {
-                        self.variables.insert(variable.clone(), element);
+                        self.assign_variable(variable.clone(), element);
                         match self.execute_with_signal(body)? {
                             FlowSignal::None => {}
                             FlowSignal::Continue => continue,
@@ -214,7 +313,7 @@ impl Runtime {
                 },
                 Statement::Set { var, value } => {
                     let evaluated_value = self.evaluate_expression(value.clone())?;
-                    self.variables.insert(var.clone(), evaluated_value);
+                    self.assign_variable(var.clone(), evaluated_value);
                 }
                 Statement::Function {
                     name,
@@ -222,9 +321,7 @@ impl Runtime {
                     body,
                     exported,
                 } => {
-                    self.functions
-                        .borrow_mut()
-                        .insert(name.clone(), (params.clone(), body.clone(), *exported));
+                    self.define_function(name.clone(), params.clone(), body.clone(), *exported);
                 }
                 Statement::FunctionCall { name, args } => {
                     let value = self.evaluate_expression(Expression::FunctionCall {
@@ -283,15 +380,15 @@ impl Runtime {
                     Ok(FlowSignal::None) => {}
                     Ok(signal) => return Ok(signal),
                     Err(error) => {
-                        let previous_value = self.variables.insert(
+                        let previous_value = self.set_local_variable(
                             error_var.clone(),
                             Expression::StringLiteral(error.to_string()),
                         );
                         let catch_result = self.execute_with_signal(catch_body);
                         if let Some(value) = previous_value {
-                            self.variables.insert(error_var.clone(), value);
+                            self.set_local_variable(error_var.clone(), value);
                         } else {
-                            self.variables.remove(error_var);
+                            self.remove_local_variable(error_var);
                         }
                         match catch_result? {
                             FlowSignal::None => {}
@@ -334,13 +431,15 @@ impl Runtime {
         let mut module_runtime = Runtime::new_with_base_dir(module_base_dir);
         module_runtime.execute(&module_statements)?;
 
-        let funcs_clone = module_runtime.functions.borrow().clone();
+        let module_state = ModuleState {
+            functions: module_runtime.functions.clone(),
+        };
         self.modules
             .borrow_mut()
-            .insert(module_name.to_string(), funcs_clone.clone());
+            .insert(module_name.to_string(), module_state.clone());
         self.module_cache_by_path
             .borrow_mut()
-            .insert(cache_key, funcs_clone);
+            .insert(cache_key, module_state);
 
         Ok(())
     }
@@ -404,14 +503,16 @@ impl Runtime {
         &self,
         variables: HashMap<String, Expression>,
         functions: SharedFunctionTable,
+        parent_scope: Rc<VariableScope>,
+        base_dir: PathBuf,
     ) -> Runtime {
         Runtime {
-            variables,
+            scope: VariableScope::child(variables, parent_scope),
             functions,
             native_functions: self.native_functions.clone(),
             modules: self.modules.clone(),
             module_cache_by_path: self.module_cache_by_path.clone(),
-            base_dir: self.base_dir.clone(),
+            base_dir,
         }
     }
 
@@ -444,10 +545,9 @@ impl Runtime {
             }
             Expression::Variable(name) => {
                 let val = self
-                    .variables
-                    .get(name)
+                    .lookup_variable(name)
                     .ok_or_else(|| RuntimeError::new(format!("Undefined variable '{}'", name)))?;
-                self.print_expression(val)?;
+                self.print_expression(&val)?;
             }
             Expression::FunctionCall { name, args } => {
                 let val = self.evaluate_expression(Expression::FunctionCall {
@@ -494,10 +594,9 @@ impl Runtime {
             }
             Expression::Variable(name) => {
                 let val = self
-                    .variables
-                    .get(name)
+                    .lookup_variable(name)
                     .ok_or_else(|| RuntimeError::new(format!("Undefined variable '{}'", name)))?;
-                self.expression_to_string(val)
+                self.expression_to_string(&val)
             }
             Expression::FunctionCall { name, args } => {
                 let val = self.evaluate_expression(Expression::FunctionCall {
@@ -540,9 +639,7 @@ impl Runtime {
                 self.render_interpolation(&parts)?,
             )),
             Expression::Variable(name) => self
-                .variables
-                .get(&name)
-                .cloned()
+                .lookup_variable(&name)
                 .ok_or_else(|| RuntimeError::new(format!("Undefined variable '{}'", name))),
             Expression::FunctionCall { name, args } => {
                 let evaluated_args: Vec<Expression> = args
@@ -557,33 +654,35 @@ impl Runtime {
                         let func_name = parts[1];
                         let module_state = {
                             let modules = self.modules.borrow();
-                            modules.get(module_name).map(|module_functions| {
-                                (
-                                    module_functions.clone(),
-                                    module_functions.get(func_name).cloned(),
-                                )
-                            })
+                            modules.get(module_name).cloned()
                         };
 
-                        if let Some((module_functions, Some((params, body, exported)))) =
-                            module_state
-                        {
-                            if !exported {
-                                return Err(RuntimeError::new(format!(
-                                    "Function '{}.{}' is not exported",
-                                    module_name, func_name
-                                )));
+                        if let Some(module_state) = module_state {
+                            let definition =
+                                module_state.functions.borrow().get(func_name).cloned();
+                            if let Some(definition) = definition {
+                                if !definition.exported {
+                                    return Err(RuntimeError::new(format!(
+                                        "Function '{}.{}' is not exported",
+                                        module_name, func_name
+                                    )));
+                                }
+
+                                let local_vars = self.bind_arguments(
+                                    &definition.params,
+                                    &evaluated_args,
+                                    &name,
+                                )?;
+
+                                let mut nested_runtime = self.create_nested_runtime(
+                                    local_vars,
+                                    module_state.functions.clone(),
+                                    definition.scope.clone(),
+                                    definition.base_dir.clone(),
+                                );
+                                let value = nested_runtime.execute(&definition.body)?;
+                                return Ok(value.unwrap_or(Expression::Null));
                             }
-
-                            let local_vars =
-                                self.bind_arguments(&params, &evaluated_args, &name)?;
-
-                            let module_funcs_with_exported =
-                                Rc::new(RefCell::new(module_functions));
-                            let mut nested_runtime =
-                                self.create_nested_runtime(local_vars, module_funcs_with_exported);
-                            let value = nested_runtime.execute(&body)?;
-                            return Ok(value.unwrap_or(Expression::Null));
                         }
                     }
                 }
@@ -597,11 +696,17 @@ impl Runtime {
                     });
                 }
 
-                if let Some((params, body, _)) = self.functions.borrow().get(&name).cloned() {
-                    let local_vars = self.bind_arguments(&params, &evaluated_args, &name)?;
-                    let mut nested_runtime =
-                        self.create_nested_runtime(local_vars, self.functions.clone());
-                    let value = nested_runtime.execute(&body)?;
+                let definition = self.functions.borrow().get(&name).cloned();
+                if let Some(definition) = definition {
+                    let local_vars =
+                        self.bind_arguments(&definition.params, &evaluated_args, &name)?;
+                    let mut nested_runtime = self.create_nested_runtime(
+                        local_vars,
+                        self.functions.clone(),
+                        definition.scope.clone(),
+                        definition.base_dir.clone(),
+                    );
+                    let value = nested_runtime.execute(&definition.body)?;
                     return Ok(value.unwrap_or(Expression::Null));
                 }
 
@@ -716,9 +821,17 @@ impl Runtime {
     ) -> Result<(), RuntimeError> {
         let (root_var, property_path) = self.collect_assignment_path(object, property)?;
 
-        if let Some(mut root_value) = self.variables.remove(&root_var) {
+        if let Some(target_scope) = VariableScope::find_containing(&self.scope, &root_var) {
+            let mut root_value = target_scope
+                .variables
+                .borrow_mut()
+                .remove(&root_var)
+                .ok_or_else(|| RuntimeError::new(format!("Undefined variable '{}'", root_var)))?;
             self.assign_property_path(&mut root_value, &property_path, value)?;
-            self.variables.insert(root_var, root_value);
+            target_scope
+                .variables
+                .borrow_mut()
+                .insert(root_var, root_value);
         } else {
             if matches!(property_path.first(), Some(AccessKey::Number(_))) {
                 return Err(RuntimeError::new(
@@ -727,7 +840,7 @@ impl Runtime {
             }
             let mut root_value = Expression::Object(std::collections::HashMap::new());
             self.assign_property_path(&mut root_value, &property_path, value)?;
-            self.variables.insert(root_var, root_value);
+            self.set_local_variable(root_var, root_value);
         }
 
         Ok(())
@@ -829,9 +942,9 @@ impl Runtime {
 
         if let Expression::Variable(module_name) = &object {
             if let AccessKey::String(property_name) = &property_key {
-                if let Some(module_functions) = self.modules.borrow().get(module_name) {
-                    if let Some((_, _, exported)) = module_functions.get(property_name) {
-                        if !exported {
+                if let Some(module_state) = self.modules.borrow().get(module_name) {
+                    if let Some(definition) = module_state.functions.borrow().get(property_name) {
+                        if !definition.exported {
                             return Err(RuntimeError::new(format!(
                                 "Function '{}.{}' is not exported",
                                 module_name, property_name
@@ -916,7 +1029,7 @@ impl Runtime {
     }
 
     pub fn get_variable(&self, name: &str) -> Option<Expression> {
-        self.variables.get(name).cloned()
+        self.lookup_variable(name)
     }
 
     pub fn has_function(&self, name: &str) -> bool {

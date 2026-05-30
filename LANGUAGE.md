@@ -120,12 +120,24 @@ Loop control:
 ### 4.6 Functions
 
 ```vx
+set offset 10
+
 function add(a, b) start
     return math_add(a, b)
 end
 
 print add(2, 3)
+
+function add_offset(x) start
+    return x + offset
+end
 ```
+
+Functions use lexical scope:
+
+- parameters and local assignments are checked first.
+- outer variables from the definition scope are visible when no local variable shadows them.
+- assigning an existing outer variable updates that outer variable.
 
 ### 4.7 Module import/export
 
@@ -137,10 +149,19 @@ print mathx.inc(5)
 In module file:
 
 ```vx
+set step 1
+
+function helper(x) start
+    return x + step
+end
+
 export function inc(x) start
-    return math_add(x, 1)
+    return helper(x)
 end
 ```
+
+Only `export function` declarations are callable from importing scripts. Private module functions
+and module-level variables remain available to functions defined inside that module.
 
 ### 4.8 Test blocks
 
@@ -242,6 +263,9 @@ import m from "./lib/module.vx"
 ```
 
 Nested imports also resolve relative to their own file locations.
+
+Imported modules are cached by resolved path. Re-importing the same file under another alias
+reuses the same module state.
 
 ## 8. Standard Library
 

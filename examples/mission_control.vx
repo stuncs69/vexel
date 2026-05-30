@@ -1,0 +1,90 @@
+print "Vexel Mission Control"
+print "====================="
+print ""
+
+set min_fuel 35
+set min_oxygen 60
+set min_signal 70
+
+set fleet []
+set fleet array_push(fleet, {name: "Aster", fuel: 72, oxygen: 91, signal: 84, sector: "Europa"})
+set fleet array_push(fleet, {name: "Boreal", fuel: 29, oxygen: 88, signal: 77, sector: "Titan"})
+set fleet array_push(fleet, {name: "Cygnus", fuel: 51, oxygen: 44, signal: 92, sector: "Mars"})
+set fleet array_push(fleet, {name: "Daedalus", fuel: 18, oxygen: 37, signal: 41, sector: "Luna"})
+
+function status(ship) start
+    set problems []
+
+    if ship.fuel < min_fuel start
+        set problems array_push(problems, "fuel")
+    end
+
+    if ship.oxygen < min_oxygen start
+        set problems array_push(problems, "oxygen")
+    end
+
+    if ship.signal < min_signal start
+        set problems array_push(problems, "signal")
+    end
+
+    if array_length(problems) == 0 start
+        return "green"
+    end
+
+    if array_length(problems) == 1 start
+        return "yellow"
+    end
+
+    return "red"
+end
+
+function score(ship) start
+    return ship.fuel + ship.oxygen + ship.signal
+end
+
+function badge(ship) start
+    set level status(ship)
+
+    if level == "green" start
+        return "[OK]"
+    else if level == "yellow" start
+        return "[WARN]"
+    else start
+        return "[CRIT]"
+    end
+end
+
+set summary {green: 0, yellow: 0, red: 0}
+set top_ship fleet[0]
+set top_score score(top_ship)
+
+for ship in fleet start
+    set level status(ship)
+    set summary[level] summary[level] + 1
+
+    set current_score score(ship)
+    if current_score > top_score start
+        set top_ship ship
+        set top_score current_score
+    end
+
+    print "${badge(ship)} ${ship.name} :: sector=${ship.sector}, fuel=${ship.fuel}, oxygen=${ship.oxygen}, signal=${ship.signal}, score=${current_score}"
+end
+
+print ""
+print "Fleet summary"
+print "green=${summary.green}, yellow=${summary.yellow}, red=${summary.red}"
+print "top_ship=${top_ship.name}, top_score=${top_score}"
+
+set report {
+    fleet_size: 4,
+    green: summary.green,
+    yellow: summary.yellow,
+    red: summary.red,
+    top_ship: top_ship.name,
+    top_score: top_score
+}
+
+print ""
+print "JSON report"
+print json_stringify(report)
